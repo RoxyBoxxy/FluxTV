@@ -12,6 +12,32 @@ Node.js panel + scheduler for a 24/7 music video TV channel with:
 - **Imports videos with `yt-dlp` from YouTube URLs**
 - Saves files as `media/Artist/Track.mp4`
 
+## Status Overview
+
+Below is a quick overview of what features are currently **working** and which are **not working / experimental**.
+
+| Feature                           | Status           | Notes |
+|----------------------------------|------------------|-------|
+| Video import via yt-dlp          | ✅ Working       | Supports YouTube URLs, automatic metadata extraction. |
+| Video storage (media/Artist/)    | ✅ Working       | Filename auto‑sanitised. |
+| SQLite database integration      | ✅ Working       | Stores title, artist, year, genre, path, ident flag, etc. |
+| Media page pagination            | ✅ Working       | 25 items per page, server‑side filters. |
+| Search + filters                 | ✅ Working       | Search by title/artist/year/genre + Ident filter. |
+| Live import log streaming        | ✅ Working       | Uses chunked responses to update modal in real time. |
+| Now Playing overlay in ffmpeg    | ⚠️ Partially Working | Basic text works; advanced animation still experimental. |
+| Logo overlay (PNG)               | ✅ Working       | Uses ffmpeg filter_complex. |
+| Scheduler continuous playback    | ⚠️ Unstable      | Occasional FFmpeg stall depending on input file timing. |
+| No‑repeat rule (time‑based)      | ⚠️ Partially Working | Basic repeat‑avoidance works; advanced logic pending. |
+| HLS output                       | ⚠️ Working with caveats | Depends on ffmpeg stability & config. |
+| Ident playback                   | ✅ Working       | Plays ident every N tracks. |
+| Login system                     | ✅ Working       | Single admin account. |
+| Web UI modals                    | ⚠️ Improving     | Add‑modal stable; edit/delete modals still pending. |
+| Multi‑playlist support           | ❌ Not implemented | Planned enhancement. |
+| Drag‑and‑drop playlist ordering  | ❌ Not implemented | UI stub exists but backend not built. |
+| Full scheduling logic (rotation) | ❌ Not implemented | Currently simple sequential rotation only. |
+
+---
+
 ## Requirements
 
 - Node.js 18+
@@ -42,9 +68,9 @@ npm start
 
 Then:
 
-1. Go to `http://localhost:4456/login`
-2. Log in with the credentials from `.env`
-3. Click **Add Video** in the top bar
+1. Go to `http://localhost:4456`
+2. First setup will create you an account then login
+3. Click **Media** in the top bar
 4. Paste a YouTube URL and submit
 
 The app will:
@@ -71,7 +97,7 @@ The scheduler:
 Access stream at:
 
 ```
-http://your-server:4456/hls/stream.m3u8
+http://your-server:4456/public/hls/stream.m3u8
 ```
 
 ## Notes
