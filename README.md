@@ -7,7 +7,7 @@ Node.js panel + scheduler for a 24/7 music video TV channel with:
 - Logo overlay (PNG)
 - Idents every N tracks
 - Playlists with drag-and-drop ordering
-- Simple login protection (single admin user)
+- Simple login protection (Multi admin user)
 - Uses `sqlite` + `sqlite3` (async/await)
 - **Imports videos with `yt-dlp` from YouTube URLs**
 - Saves files as `media/Artist/Track.mp4`
