@@ -31,6 +31,7 @@ Below is a quick overview of what features are currently **working** and which a
 | HLS output                       | ⚠️ Working with caveats | Depends on ffmpeg stability & config. |
 | Ident playback                   | ✅ Working       | Plays ident every N tracks. |
 | Login system                     | ✅ Working       | Single admin account. |
+| Multi User Login system          | 🛠️ In Progress   | Creating User accounts from the api work UI not implemented yet. |
 | Web UI modals                    | ⚠️ Improving     | Add‑modal stable; edit/delete modals still pending. |
 | Multi‑playlist support           | ❌ Not implemented | Planned enhancement. |
 | Drag‑and‑drop playlist ordering  | ❌ Not implemented | UI stub exists but backend not built. |
