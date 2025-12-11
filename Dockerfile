@@ -37,8 +37,7 @@ RUN apt-get update && apt-get install -y \
     yasm \
     zlib1g-dev \
     libssl-dev \
-    libaom-dev \
-    libsvtav1-dev && \
+    libaom-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -48,6 +47,15 @@ RUN git clone https://github.com/mstorsjo/fdk-aac.git && \
     cd fdk-aac && \
     autoreconf -fiv && \
     ./configure --enable-shared=no --enable-static=yes && \
+    make -j$(nproc) && \
+    make install
+
+# Build SVT-AV1 (required for --enable-libsvtav1)
+RUN git clone https://gitlab.com/AOMediaCodec/SVT-AV1.git && \
+    cd SVT-AV1 && \
+    git checkout v1.8.0 && \
+    mkdir build && cd build && \
+    cmake -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
     make -j$(nproc) && \
     make install
 
