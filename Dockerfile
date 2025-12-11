@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     git \
+    curl \
     libass-dev \
     libfreetype6-dev \
     libfribidi-dev \
