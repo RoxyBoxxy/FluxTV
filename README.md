@@ -125,3 +125,8 @@ rtmp://your-server/mount
   - Reverse proxy (nginx) in front
   - IP/VPN restriction for admin access
 - Port 554/UDP must be free in order for ffmpeg to pass video
+
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=RoxyBoxxy/music-tv-panel&type=date&legend=top-left)](https://www.star-history.com/#RoxyBoxxy/music-tv-panel&type=date&legend=top-left)
