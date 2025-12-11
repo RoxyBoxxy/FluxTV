@@ -9,6 +9,7 @@ import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { requireAuth, checkUserSetup } from "./libs/auth.js";
+import { fetchYearAndGenre } from "./libs/metaFetch.js";
 import fs from 'fs'
 
 const app = express();
@@ -125,6 +126,12 @@ app.get("/videos/:id/edit", requireAuth, async (req, res) => {
   const video = await db.get("SELECT * FROM videos WHERE id = ?", req.params.id);
   if (!video) return res.status(404).send("Video not found");
   res.render("edit-video", { user: req.user, video });
+});
+
+app.post("/api/grab", requireAuth, async (req, res) => {
+  const { artist, track } = req.body;
+  const result = await fetchYearAndGenre(artist, track);
+  res.json(result)
 });
 
 // settings page

@@ -49,6 +49,8 @@ async function loadVideos() {
             <input id="edit_ident" type="checkbox" ${v.is_ident ? "checked" : ""}>
             Ident
           </label>
+
+          <button id="modalGrab" class="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm">Grab Metadata</button>
         </div>
       `;
 
@@ -71,6 +73,32 @@ async function loadVideos() {
       };
 
       openModal();
+
+      const grabBtn = document.getElementById("modalGrab");
+      if (grabBtn) {
+        grabBtn.onclick = async () => {
+          const urlencoded = new URLSearchParams();
+          urlencoded.append("artist", document.getElementById("edit_artist").value);
+          urlencoded.append("track", document.getElementById("edit_title").value);
+
+          const requestOptions = {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: urlencoded,
+            redirect: "follow"
+          };
+
+          const response = await fetch("/api/grab", requestOptions);
+          const result = await response.json();
+
+          if (result.year !== undefined) {
+            document.getElementById("edit_year").value = result.year;
+          }
+          if (result.genre !== undefined) {
+            document.getElementById("edit_genre").value = result.genre;
+          }
+        }
+      }
     });
 
     tr.querySelector(".deleteBtn").addEventListener("click", () => {

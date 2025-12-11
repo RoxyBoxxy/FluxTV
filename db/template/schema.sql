@@ -60,7 +60,8 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
   ('no_repeat_minutes', '20'),
   ('media_dir', './media'),
   ('ytd_user', null),
-  ('ytd_pass', null);
+  ('ytd_pass', null),
+  ('lastFMKey', null);
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
