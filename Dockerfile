@@ -26,6 +26,10 @@ RUN apt-get update && apt-get install -y \
     libnuma-dev \
     libsoxr-dev \
     libbluray-dev \
+    libzimg-dev \
+    libzvbi-dev \
+    libspeex-dev \
+    libfdk-aac-dev \
     nasm \
     ninja-build \
     pkg-config \
@@ -87,6 +91,19 @@ RUN cd ffmpeg && ./configure \
 RUN cd ffmpeg && make -j$(nproc)
 
 RUN apt-get update && apt-get install -y fonts-dejavu-core
+
+
+ARG TARGETARCH
+RUN echo "Installing yt-dlp for architecture: ${TARGETARCH}" && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+        curl -L -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        curl -L -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64; \
+    else \
+        echo "Unsupported architecture: $TARGETARCH" && exit 1; \
+    fi && \
+    chmod +x /usr/local/bin/yt-dlp && \
+    yt-dlp --version
 # -----------------------------
 # STAGE 2 — Final Node runtime
 # -----------------------------
