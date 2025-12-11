@@ -2,7 +2,9 @@
 export default {
   content: [
     "./views/**/*.ejs",
-    "./public/**/*.js"
+    "./views/*.ejs",
+    "./*.ejs",
+    "./public/**/*.js",
   ],
   theme: {
     extend: {},

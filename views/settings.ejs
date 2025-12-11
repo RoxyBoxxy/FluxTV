@@ -27,11 +27,11 @@
 
   <!-- Media -->
   <div class="bg-gray-800 p-6 rounded-lg border border-gray-700 space-y-4 max-w-xl">
-    <h2 class="text-xl font-semibold">Media</h2>
+    <h2 class="text-xl font-semibold">Last.fm API Key (get one from https://www.last.fm/api/account/create)</h2>
 
     <div class="space-y-2">
-      <label class="block text-sm font-medium">Media Folder Path (e.g. ./media)</label>
-      <input id="media_dir" type="text"
+      <label class="block text-sm font-medium">API Key</label>
+      <input id="lastFMKey" type="text"
         class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded focus:ring-2 focus:ring-pink-500" />
     </div>
   </div>
@@ -97,7 +97,7 @@
     <div class="space-y-2">
       <label class="block text-sm font-medium">Logo</label>
       <input id="logo" type="file"
-        class="w-full text-gray-200 file:bg-pink-600 file:text-white file:rounded-md file:border-0 file:px-4 file:py-2 file:hover:bg-pink-700" />
+        class="w-full text-gray-200 file:bg-purple-600 file:text-white file:rounded-md file:border-0 file:px-4 file:py-2 file:hover:bg-purple-700" />
     </div>
   </div>
 
@@ -113,7 +113,7 @@
   </div>
 
   <button onclick="saveSettings()"
-    class="px-5 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-md transition">
+    class="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition">
     Save Settings
   </button>
 
@@ -129,7 +129,7 @@ async function loadSettings() {
   document.getElementById("ident_interval_minutes").value = s.ident_interval_minutes || "";
   document.getElementById("ad_interval_minutes").value = s.ad_interval_minutes || "";
   document.getElementById("no_repeat_minutes").value = s.no_repeat_minutes || "";
-  document.getElementById("media_dir").value = s.media_dir || "";
+  document.getElementById("lastFMKey").value = s.lastFMKey || "";
   document.getElementById("default_fps").value = s.default_fps || "";
   document.getElementById("default_resolution").value = s.default_resolution || "";
   document.getElementById("bitrate_video").value = s.bitrate_video || "";
@@ -144,7 +144,7 @@ async function saveSettings() {
   form.append("ident_interval_minutes", document.getElementById("ident_interval_minutes").value);
   form.append("ad_interval_minutes", document.getElementById("ad_interval_minutes").value);
   form.append("no_repeat_minutes", document.getElementById("no_repeat_minutes").value);
-  form.append("media_dir", document.getElementById("media_dir").value);
+  form.append("lastFMKey", document.getElementById("lastFMKey").value);
   form.append("default_fps", document.getElementById("default_fps").value);
   form.append("default_resolution", document.getElementById("default_resolution").value);
   form.append("bitrate_video", document.getElementById("bitrate_video").value);
