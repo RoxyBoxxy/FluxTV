@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 import dbPromise from "./db.js";
+import { fetchYearAndGenre } from "./metaFetch.js";
 
 const MEDIA_ROOT = process.env.MEDIA_ROOT || "./media";
 const YTDLP_BIN = process.env.YTDLP_BIN || "yt-dlp";
@@ -147,6 +148,9 @@ function streamYtDlp(args) {
     url
   ]);
   logCallback("✅ Download complete");
+  const meta = await fetchYearAndGenre(artist, track, year);
+
+  logCallback("Found Meta for " + track + "with the year and genre: " + meta.year + ', ' + meta.genre)
 
   logCallback("📝 Saving to database…");
   const db = await dbPromise;
@@ -156,8 +160,8 @@ function streamYtDlp(args) {
     relPath,
     track,
     artist,
-    year,
-    genre,
+    meta.year,
+    meta.genre,
     duration,
     url
   );
