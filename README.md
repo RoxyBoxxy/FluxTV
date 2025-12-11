@@ -4,12 +4,12 @@
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-enabled-brightgreen?style=for-the-badge&logo=ffmpeg&logoColor=white)
 ![Dependencies](https://img.shields.io/librariesio/github/RoxyBoxxy/music-tv-panel?style=for-the-badge)
 
-# Music TV Panel (yt-dlp + sqlite3)
+# FluxTV (yt-dlp + sqlite3)
 
-Music TV Panel is a professional-grade, fully automated music-video broadcasting and scheduling system inspired by classic music TV channels like Kerrang!, Scuzz, and MTV2.
+FluxTV is a professional-grade, fully automated music-video broadcasting and scheduling system inspired by classic music TV channels like Kerrang!, Scuzz, and MTV2.
 It ingests music videos, enriches them with metadata, schedules playback, overlays branding, and streams a continuous 24/7 channel using FFmpeg.
 
-Built entirely in Node.js, SQLite, and FFmpeg, this project is designed for creators who want to run their own music-video channel — whether locally, publicly, or as part of a personal homelab broadcast setup. I created this project because there are no open-source solutions in this space, and most commercial systems require proprietary hardware or expensive licensing. Music TV Panel aims to bring that capability to everyone.
+Built entirely in Node.js, SQLite, and FFmpeg, this project is designed for creators who want to run their own music-video channel — whether locally, publicly, or as part of a personal homelab broadcast setup. I created this project because there are no open-source solutions in this space, and most commercial systems require proprietary hardware or expensive licensing. FluxTV aims to bring that capability to everyone.
 
 ## Fetures
 
