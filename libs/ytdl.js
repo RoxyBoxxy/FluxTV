@@ -81,92 +81,158 @@ function parseArtistTrackFromTitle(title) {
   return { artist: null, track: title.trim() };
 }
 
-export async function addVideoFromUrl(url, logCallback = () => {}) {
-function streamYtDlp(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(YTDLP_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+export async function addVideoFromUrl(url, callbacks = {}) {
+  const {
+    onLog = () => {},
+    onMeta = () => {},
+    onProgress = () => {},
+    onPlaylist = () => {},
+    onVideoComplete = () => {}
+  } = callbacks;
 
-    proc.stdout.on("data", (d) => {
-      const text = d.toString();
-      logCallback(text.trim()); // raw
-      // Hybrid: highlight useful parts
-      if (/download/i.test(text)) logCallback("➡ Downloading video…");
-      if (/Merging formats/i.test(text)) logCallback("➡ Merging audio & video…");
+  function streamYtDlp(args) {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(YTDLP_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+
+      proc.stdout.on("data", (d) => {
+        const text = d.toString();
+        onLog(text.trim());
+      });
+
+      proc.stderr.on("data", (d) => {
+        const text = d.toString();
+        onLog(text.trim());
+
+        // Match yt-dlp download progress lines with speed and ETA
+        const dlMatch = text.match(/\[download\]\s+([\d.]+)%.*?at\s+([^\s]+).*?ETA\s+([0-9:]+)/i);
+        if (dlMatch) {
+          const percent = Math.min(100, parseFloat(dlMatch[1]));
+          const speed = dlMatch[2];
+          const eta = dlMatch[3];
+          onProgress({ percent, speed, eta });
+        }
+      });
+
+      proc.on("close", (code) => {
+        if (code === 0) {
+          // Ensure progress completes even if yt-dlp was silent
+          onProgress({ percent: 100 });
+          resolve();
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}`));
+        }
+      });
     });
-
-    proc.stderr.on("data", (d) => {
-      const text = d.toString();
-      logCallback(text.trim()); // ytdlp prints progress here
-      if (/ETA/i.test(text)) logCallback("➡ " + text.trim());
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`yt-dlp exited with code ${code}`));
-    });
-  });
-}
-  logCallback("🔍 Extracting metadata…");
-  const metaRes = await runYtDlp(["-J", "--no-warnings", "--skip-download", url]);
-  const info = JSON.parse(metaRes.stdout);
-
-  let artist = info.artist || null;
-  let track = info.track || null;
-
-  const fromTitle = parseArtistTrackFromTitle(info.title);
-  if (!artist) artist = fromTitle.artist || info.channel || info.uploader || "Unknown";
-  if (!track) track = fromTitle.track || info.title || "Unknown";
-
-  const year = info.upload_date ? parseInt(info.upload_date.slice(0, 4), 10) : null;
-  let genre = null;
-  if (Array.isArray(info.categories) && info.categories.length) {
-    genre = info.categories[0];
-  } else if (Array.isArray(info.tags) && info.tags.length) {
-    genre = info.tags[0];
   }
 
-  const duration = info.duration || null;
+  onLog("🔍 Inspecting URL…");
 
-  const artistSafe = safeName(artist);
-  const trackSafe = safeName(track);
-  const ext = "mp4";
-
-  const relPath = path.join(artistSafe,`${trackSafe}.${ext}`);
-  const fullDir = path.join(MEDIA_ROOT, artistSafe);
-  const fullPath = path.join(MEDIA_ROOT, relPath);
-
-  fs.mkdirSync(fullDir, { recursive: true });
-
-  const outTemplate = fullPath;
-  logCallback(`🎬 Downloading: ${artist} - ${track}`);
-  await streamYtDlp([
-    "-f",
-    "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4][vcodec^=avc1]",
-    "-o",
-    outTemplate,
+  // First pass: detect playlist or single video
+  const metaRes = await runYtDlp([
+    "-J",
     "--no-warnings",
+    "--flat-playlist",
     url
   ]);
-  logCallback("✅ Download complete");
-  const meta = await fetchYearAndGenre(artist, track, year);
 
-  logCallback("Found Meta for " + track + "with the year and genre: " + meta.year + ', ' + meta.genre)
+  const info = JSON.parse(metaRes.stdout);
 
-  logCallback("📝 Saving to database…");
+  const isPlaylist =
+    Array.isArray(info.entries) ||
+    (typeof info.title === "string" && /playlist/i.test(info.title)) ||
+    /playlist/i.test(url);
+
+  const entries = Array.isArray(info.entries) ? info.entries : [info];
+
+  if (isPlaylist && entries.length > 1) {
+    onPlaylist({ title: info.title || "Playlist", count: entries.length });
+  }
+
   const db = await dbPromise;
-  const result = await db.run(
-    `INSERT INTO videos (path, title, artist, year, genre, duration, is_ident, source_url)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
-    relPath,
-    track,
-    artist,
-    meta.year,
-    meta.genre,
-    duration,
-    url
-  );
 
-  const row = await db.get("SELECT * FROM videos WHERE id = ?", result.lastID);
-  logCallback("🎉 Import finished!");
-  return row;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+
+    onProgress({ percent: 0 });
+
+    // Full metadata for each entry
+    const fullRes = await runYtDlp([
+      "-J",
+      "--no-warnings",
+      entry.url || entry.id
+    ]);
+
+    const v = JSON.parse(fullRes.stdout);
+
+    let artist = v.artist || null;
+    let track = v.track || null;
+
+    const fromTitle = parseArtistTrackFromTitle(v.title);
+    if (!artist) artist = fromTitle.artist || v.channel || v.uploader || "Unknown";
+    if (!track) track = fromTitle.track || v.title || "Unknown";
+
+    const year = v.upload_date ? parseInt(v.upload_date.slice(0, 4), 10) : null;
+    const duration = v.duration || null;
+
+    const thumbnail = Array.isArray(v.thumbnails) && v.thumbnails.length
+      ? v.thumbnails[v.thumbnails.length - 1].url
+      : null;
+
+    onMeta({
+      artist,
+      track,
+      title: `${artist} - ${track}`,
+      thumbnail,
+      duration
+    });
+
+    const artistSafe = safeName(artist);
+    const trackSafe = safeName(track);
+    const relPath = path.join(artistSafe, `${trackSafe}.mp4`);
+    const fullDir = path.join(MEDIA_ROOT, artistSafe);
+    const fullPath = path.join(MEDIA_ROOT, relPath);
+
+    fs.mkdirSync(fullDir, { recursive: true });
+
+    onMeta({
+      artist,
+      track,
+      index: index + 1,
+      total: entries.length
+    });
+
+    onLog(`🎬 Downloading (${index + 1}/${entries.length}): ${artist} - ${track}`);
+
+    await streamYtDlp([
+      "--no-playlist",
+      "-f",
+      "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4][vcodec^=avc1]",
+      "-o",
+      fullPath,
+      "--no-warnings",
+      entry.url || entry.id
+    ]);
+
+    onLog("✅ Download complete");
+
+    const meta = await fetchYearAndGenre(artist, track, year);
+
+    const result = await db.run(
+      `INSERT INTO videos (path, title, artist, year, genre, duration, is_ident, source_url)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+      relPath,
+      track,
+      artist,
+      meta.year,
+      meta.genre,
+      duration,
+      entry.url || url
+    );
+
+    const row = await db.get("SELECT * FROM videos WHERE id = ?", result.lastID);
+
+    onVideoComplete(row);
+  }
+
+  onLog("🎉 All imports finished");
 }

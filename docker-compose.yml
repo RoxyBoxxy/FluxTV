@@ -1,10 +1,11 @@
 services:
   fluxtv:
-    build: .
+    image: ghcr.io/roxyboxxy/fluxtv:latest
     container_name: FluxTV
     ports:
       - "4456:4456"
     volumes:
       - ./media:/app/media
+      - ./.env:/app/.env
     environment:
       NODE_ENV: production

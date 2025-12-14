@@ -1,8 +1,15 @@
 import "dotenv/config";
 import express from "express";
+import { WebSocketServer } from "ws";
 import path from "path";
 import dbPromise from "./libs/db.js";
-import { startScheduler } from "./libs/scheduler.js";
+import {
+  startMainFfmpegManually,
+  stopMainFfmpeg,
+  isFfmpegRunning,
+  getFfmpegStats,
+  startScheduler
+} from "./libs/scheduler.js";
 import { addVideoFromUrl } from "./libs/ytdl.js";
 import multer from "multer";
 import cookieParser from "cookie-parser";
@@ -30,7 +37,61 @@ app.use(cookieParser(SESSION_SECRET));
 app.use("/public", express.static("public"));
 app.use("/hls", express.static("hls"));
 
+
 app.use(checkUserSetup);
+
+// --- Search index (SQLite FTS5) ---
+async function ensureAndRebuildVideoFts({ rebuild = false } = {}) {
+  const db = await dbPromise;
+
+  // Create FTS table (keeps a searchable index of videos)
+  await db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts
+    USING fts5(
+      title,
+      artist,
+      genre,
+      content='videos',
+      content_rowid='id'
+    );
+  `);
+
+  // Triggers to keep FTS in sync with videos table
+  await db.exec(`
+    CREATE TRIGGER IF NOT EXISTS videos_ai AFTER INSERT ON videos BEGIN
+      INSERT INTO videos_fts(rowid, title, artist, genre)
+      VALUES (new.id, COALESCE(new.title,''), COALESCE(new.artist,''), COALESCE(new.genre,''));
+    END;
+  `);
+  await db.exec(`
+    CREATE TRIGGER IF NOT EXISTS videos_ad AFTER DELETE ON videos BEGIN
+      INSERT INTO videos_fts(videos_fts, rowid, title, artist, genre)
+      VALUES('delete', old.id, old.title, old.artist, old.genre);
+    END;
+  `);
+  await db.exec(`
+    CREATE TRIGGER IF NOT EXISTS videos_au AFTER UPDATE ON videos BEGIN
+      INSERT INTO videos_fts(videos_fts, rowid, title, artist, genre)
+      VALUES('delete', old.id, old.title, old.artist, old.genre);
+      INSERT INTO videos_fts(rowid, title, artist, genre)
+      VALUES (new.id, COALESCE(new.title,''), COALESCE(new.artist,''), COALESCE(new.genre,''));
+    END;
+  `);
+
+  // Initial population (idempotent)
+  await db.exec(`
+    INSERT INTO videos_fts(rowid, title, artist, genre)
+    SELECT id, COALESCE(title,''), COALESCE(artist,''), COALESCE(genre,'')
+    FROM videos
+    WHERE id NOT IN (SELECT rowid FROM videos_fts);
+  `);
+
+  // Daily maintenance: REBUILD (optional) + OPTIMIZE
+  if (rebuild) {
+    await db.exec(`INSERT INTO videos_fts(videos_fts) VALUES('rebuild');`);
+  }
+  await db.exec(`INSERT INTO videos_fts(videos_fts) VALUES('optimize');`);
+}
 
 
 const upload = multer({ dest: "uploads/" });
@@ -144,6 +205,9 @@ app.get("/settings", requireAuth, (req, res) => {
 app.get("/media", requireAuth, (req, res) => {
   res.render("media", { user: req.user });
 });
+app.get("/users", requireAuth, (req, res) => {
+  res.render("users", { user: req.user });
+});
 
 // playlist editor
 app.get("/playlists/:id", requireAuth, (req, res) => {
@@ -154,41 +218,84 @@ app.get("/playlists/:id", requireAuth, (req, res) => {
 app.post("/api/add-url", requireAuth, async (req, res) => {
   const { url } = req.body;
   if (!url) {
-    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Error: URL required\n");
-    return;
+    return res.status(400).json({ ok: false, error: "URL required" });
   }
 
-  // Streaming headers
   res.writeHead(200, {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Transfer-Encoding": "chunked",
-    "Cache-Control": "no-cache, no-transform",
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
   });
 
-  function send(msg) {
+  const send = (type, data) => {
     try {
-      res.write(msg + "\n");
+      res.write(`event: ${type}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
     } catch {}
-  }
+  };
 
-  send("Starting yt-dlp import…");
-  send(`URL: ${url}`);
+  send("status", { message: "Starting yt-dlp import", url });
 
   try {
-    // Pass a logging callback to addVideoFromUrl so it can stream messages
-    const video = await addVideoFromUrl(url, (log) => {
-      send(log);
+    await addVideoFromUrl(url, {
+      onLog: (line) => send("log", { line }),
+      onMeta: (meta) => send("meta", meta),
+      onProgress: (progress) => send("progress", progress),
+      onPlaylist: (info) => send("playlist", info),
+      onVideoComplete: (video) => send("video", video)
     });
 
-    send("");
-    send("=== DONE ===");
-    send(`Imported: ${video.artist} - ${video.title}`);
-
+    send("done", { ok: true });
     res.end();
   } catch (e) {
     console.error("add-url error", e);
-    send("ERROR: " + e.message);
+    send("error", { message: e.message });
+    res.end();
+  }
+});
+
+// API: add URL via yt-dlp (SSE stream)
+app.get("/api/add-url/stream", requireAuth, async (req, res) => {
+  const url = req.query.url;
+  if (!url) {
+    return res.status(400).end();
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+  });
+
+  const send = (type, data) => {
+    try {
+      res.write(`event: ${type}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {}
+  };
+
+  // keep-alive ping so proxies don’t close the stream
+  const keepAlive = setInterval(() => {
+    res.write(`event: ping\ndata: {}\n\n`);
+  }, 15000);
+
+  send("status", { message: "Starting yt-dlp import", url });
+
+  try {
+    await addVideoFromUrl(url, {
+      onLog: (line) => send("log", { line }),
+      onMeta: (meta) => send("meta", meta),
+      onProgress: (progress) => send("progress", progress),
+      onPlaylist: (info) => send("playlist", info),
+      onVideoComplete: (video) => send("video", video)
+    });
+
+    send("done", { ok: true });
+  } catch (e) {
+    console.error("add-url stream error", e);
+    send("error", { message: e.message });
+  } finally {
+    clearInterval(keepAlive);
     res.end();
   }
 });
@@ -196,10 +303,78 @@ app.post("/api/add-url", requireAuth, async (req, res) => {
 // API: videos
 app.get("/api/videos", requireAuth, async (req, res) => {
   const db = await dbPromise;
-  const rows = await db.all(`
+
+  const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+  const limit = Math.min(parseInt(req.query.limit || "25", 10), 100);
+  const offset = (page - 1) * limit;
+
+  const q = (req.query.q || "").trim();
+  const source = (req.query.source || "").trim();
+
+  const where = [];
+  const params = [];
+
+  if (q) {
+    // Prefer FTS (fast + ranked). Fallback to LIKE if FTS isn't available.
+    try {
+      where.push(`id IN (SELECT rowid FROM videos_fts WHERE videos_fts MATCH ?)`);
+      // Basic MATCH query; add a trailing * for prefix matches
+      const ftsQuery = q
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(t => (t.includes('"') ? t : `${t}*`))
+        .join(" ");
+      params.push(ftsQuery);
+    } catch {
+      where.push("(title LIKE ? OR artist LIKE ? OR genre LIKE ?)");
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+  }
+
+  if (source) {
+    if (source === "YouTube") {
+      where.push("source_url IS NOT NULL");
+    } else if (source === "Local") {
+      where.push("source_url IS NULL");
+    }
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const totalRow = await db.get(
+    `SELECT COUNT(*) AS cnt FROM videos ${whereSql}`,
+    params
+  );
+
+  const total = totalRow.cnt;
+
+  const rows = await db.all(
+    `
     SELECT id, path, title, artist, year, genre, duration, is_ident, source_url
     FROM videos
+    ${whereSql}
     ORDER BY artist, title
+    LIMIT ? OFFSET ?
+    `,
+    ...params,
+    limit,
+    offset
+  );
+
+  res.json({
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit),
+    rows
+  });
+});
+
+app.get("/api/users", async (req, res) => {
+  const db = await dbPromise;
+  const rows = await db.all(`
+    SELECT id, username
+    FROM users
   `);
   res.json(rows);
 });
@@ -375,7 +550,62 @@ app.post("/api/settings", requireAuth, upload.single("logo"), async (req, res) =
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
-  console.log("Music TV panel (yt-dlp) listening on port", PORT);
-  startScheduler().catch((e) => console.error("Scheduler error", e));
+app.post("/api/ffmpeg/start",  (req, res) => {
+  res.json({ ok: true, started: startMainFfmpegManually() });
+});
+
+app.post("/api/ffmpeg/stop",  (req, res) => {
+  res.json({ ok: true, stopped: stopMainFfmpeg() });
+});
+
+
+const server = app.listen(PORT, () => {
+  console.log(`
+███████╗██╗     ██╗   ██╗██╗  ██╗████████╗██╗   ██╗
+██╔════╝██║     ██║   ██║╚██╗██╔╝╚══██╔══╝██║   ██║
+█████╗  ██║     ██║   ██║ ╚███╔╝    ██║   ██║   ██║
+██╔══╝  ██║     ██║   ██║ ██╔██╗    ██║   ╚██╗ ██╔╝
+██║     ███████╗╚██████╔╝██╔╝ ██╗   ██║    ╚████╔╝ 
+╚═╝     ╚══════╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝     ╚═══╝  
+`);
+  console.log("Running and listening on port", PORT);
+  startScheduler();
+
+  // Build/maintain the search index now, then daily at 04:00 (UK time)
+  ensureAndRebuildVideoFts({ rebuild: true })
+    .then(() => console.log("✅ videos_fts indexed"))
+    .catch((e) => console.error("❌ videos_fts index error", e));
+
+  const scheduleDailyIndex = () => {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(4, 0, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next.getTime() - now.getTime();
+  };
+
+  setTimeout(function runDailyIndex() {
+    ensureAndRebuildVideoFts({ rebuild: true })
+      .then(() => console.log("✅ videos_fts rebuilt"))
+      .catch((e) => console.error("❌ videos_fts rebuild error", e));
+
+    setTimeout(runDailyIndex, 24 * 60 * 60 * 1000);
+  }, scheduleDailyIndex());
+});
+
+const wss = new WebSocketServer({ server, path: "/api/ffmpeg/stats" });
+
+wss.on("connection", (ws) => {
+  // Send initial snapshot
+  ws.send(JSON.stringify(getFfmpegStats()));
+
+  const interval = setInterval(() => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify(getFfmpegStats()));
+    }
+  }, 100);
+
+  ws.on("close", () => {
+    clearInterval(interval);
+  });
 });

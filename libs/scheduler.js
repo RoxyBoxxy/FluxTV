@@ -28,6 +28,62 @@ async function loadSettings() {
 
 let normalSinceIdent = 0;
 let mainFfmpeg = null;
+let schedulerPaused = false;
+let schedulerStarted = false;
+let currentPusher = null;
+
+let ffmpegStats = {
+  running: false,
+  fps: null,
+  bitrate: null,
+  speed: null,
+  frame: null,
+  dropped_frames: null,
+  out_time: null,
+  lastUpdate: null
+};
+
+export function getFfmpegStats() {
+  return ffmpegStats;
+}
+
+export function isFfmpegRunning() {
+  return !!mainFfmpeg;
+}
+
+export function stopMainFfmpeg() {
+  console.log("Stopping all FFmpeg processes...");
+  schedulerPaused = true;
+
+  if (currentPusher) {
+    try {
+      currentPusher.kill("SIGTERM");
+    } catch {}
+    currentPusher = null;
+  }
+
+  if (mainFfmpeg) {
+    mainFfmpeg.kill("SIGTERM");
+    mainFfmpeg = null;
+  }
+
+  ffmpegStats.running = false;
+  return true;
+}
+
+export function startMainFfmpegManually() {
+  schedulerPaused = false;
+  if (!mainFfmpeg) startMainFfmpeg();
+  return true;
+}
+
+export async function startAll() {
+  await startScheduler();
+}
+
+export function stopAll() {
+  stopMainFfmpeg();
+}
 
 async function detectGpuEncoder() {
   const platform = process.platform;
@@ -163,29 +219,26 @@ function writeNowPlaying(meta) {
 }
 
 function startMainFfmpeg() {
-  if (mainFfmpeg) {
-    return;
-  }
+  // Do not start if manually stopped
+  if (schedulerPaused) return;
+  if (mainFfmpeg) return;
 
   const inputUrl = "udp://127.0.0.1:554?fifo_size=5000000&overrun_nonfatal=1&timeout=0";
 
   const args = [
-    "-fflags",
-    "+genpts+nobuffer",
-    "-analyzeduration",
-    "0",
-    "-probesize",
-    "32k",
-    "-i",
-    inputUrl,
+    "-fflags", "+genpts+nobuffer",
+    "-analyzeduration", "0",
+    "-probesize", "32k",
+    "-i", inputUrl,
 
-    // Output 1 — RTMP passthrough
-    "-c:v", "copy",
-    "-c:a", "copy",
-    "-f", "flv",
-    settingsCache.output_rtmp_url,
+    "-progress", "pipe:1",
+    "-stats_period", "1",
 
-    // Output 2 — HLS (copy mode)
+    //"-c:v", "copy",
+    //"-c:a", "copy",
+    //"-f", "flv",
+    //settingsCache.output_rtmp_url,
+
     "-c:v", "copy",
     "-c:a", "copy",
     "-f", "hls",
@@ -197,11 +250,28 @@ function startMainFfmpeg() {
   ];
 
   console.log("Starting main FFmpeg playout pipeline (UDP -> RTMP)...");
-  mainFfmpeg = spawn("ffmpeg", args, { stdio: "inherit" });
+  mainFfmpeg = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "inherit"] });
+
+  ffmpegStats.running = true;
+  let buffer = "";
+
+  mainFfmpeg.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const [key, value] = line.trim().split("=");
+      if (!key) continue;
+      ffmpegStats[key] = value;
+      ffmpegStats.lastUpdate = Date.now();
+    }
+  });
+
   mainFfmpeg.on("close", (code) => {
     console.log("Main FFmpeg exited with code", code);
     mainFfmpeg = null;
-    // Ensure the main playout pipeline is always running
+    ffmpegStats.running = false;
     setTimeout(() => {
       if (!mainFfmpeg) {
         console.log("Restarting main FFmpeg after exit...");
@@ -295,6 +365,7 @@ function pushTrackToFifo(fullPath, durationSeconds) {
     const pusher = spawn("ffmpeg", args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
+    currentPusher = pusher;
 
     // Mirror ffmpeg output for logging
     pusher.stderr.on("data", (chunk) => {
@@ -306,6 +377,7 @@ function pushTrackToFifo(fullPath, durationSeconds) {
     });
 
     pusher.on("close", (code) => {
+      currentPusher = null;
       if (code === 0) {
         console.log("Finished pushing track:", fullPath);
         resolve();
@@ -322,6 +394,15 @@ function wait(ms) {
 }
 
 export async function startScheduler() {
+  if (schedulerStarted) {
+    console.log("Scheduler already running, resuming playback");
+    schedulerPaused = false;
+    if (!mainFfmpeg) startMainFfmpeg();
+    return;
+  }
+
+  schedulerStarted = true;
+
   ensureDirsAndFifo();
   console.log("TV scheduler started (yt-dlp + UDP RTMP mode)");
 
@@ -337,8 +418,12 @@ export async function startScheduler() {
   startMainFfmpeg();
 
   while (true) {
+    if (schedulerPaused) {
+      await wait(500);
+      continue;
+    }
     // Ensure main playout FFmpeg is always running before pushing into UDP
-    if (!mainFfmpeg) {
+    if (!mainFfmpeg && !schedulerPaused) {
       console.log("Main FFmpeg not running, restarting playout pipeline...");
       startMainFfmpeg();
       // Give FFmpeg a moment to open the UDP socket before we write to it again

@@ -6,10 +6,19 @@
 @plugin "flowbite/plugin";
 @source "../node_modules/flowbite";
 
+/* Add Status Modal – auto sizing */
 #addStatusModal {
-  width: 1000px;
-  height: 500px;
+  width: min(1000px, 95vw);
+  max-height: 85vh;
 }
-#addStatus {
-  height: 350px;
+
+/* Log panel transitions */
+#addStatusLog {
+  max-height: 0;
+  transition: max-height 300ms ease;
+}
+
+/* When log is visible, allow it to expand */
+#addStatusLog:not(.hidden) {
+  max-height: 60vh;
 }

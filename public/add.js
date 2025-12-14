@@ -1,7 +1,15 @@
 const form = document.getElementById("addForm");
-const statusEl = document.getElementById("addStatus");
+const statusText = document.getElementById("addStatusText");
+const statusBar = document.getElementById("addStatusBar");
+const statusLog = document.getElementById("addStatusLog");
+const toggleLogBtn = document.getElementById("addStatusToggleLog");
 const addStatusModal = document.getElementById("addStatusModal");
 const addStatusClose = document.getElementById("addStatusClose");
+
+const addMeta = document.getElementById("addMeta");
+const addMetaThumb = document.getElementById("addMetaThumb");
+const addMetaArtist = document.getElementById("addMetaArtist");
+const addMetaTrack = document.getElementById("addMetaTrack");
 
 function openAddModal() {
   if (!addStatusModal) return;
@@ -24,6 +32,14 @@ function closeAddModal() {
   }
 }
 
+if (toggleLogBtn && statusLog) {
+  toggleLogBtn.addEventListener("click", () => {
+    const visible = !statusLog.classList.contains("hidden");
+    statusLog.classList.toggle("hidden", visible);
+    toggleLogBtn.textContent = visible ? "Show log" : "Hide log";
+  });
+}
+
 if (addStatusClose) {
   addStatusClose.disabled = true;
   addStatusClose.addEventListener("click", () => {
@@ -33,68 +49,107 @@ if (addStatusClose) {
   });
 }
 
-if (form && statusEl) {
+if (form && statusText) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
     const data = Object.fromEntries(new FormData(form).entries());
 
-    // Open modal and show initial status
-    statusEl.textContent = "Downloading and importing via yt-dlp...\n";
+    statusText.textContent = "Starting yt-dlp import…";
+    statusBar.style.width = "0%";
+    statusLog.textContent = "";
+    statusLog.classList.add("hidden");
+    toggleLogBtn.textContent = "Show log";
+
+    addMeta.classList.add("hidden");
+    addMetaThumb.src = "";
+    addMetaArtist.textContent = "";
+    addMetaTrack.textContent = "";
+
     openAddModal();
 
-    try {
-      const res = await fetch("/api/add-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+    const url = data.url;
+    const es = new EventSource(`/api/add-url/stream?url=${encodeURIComponent(url)}`);
 
-      // If the server is updated to stream text logs, handle streaming here
-      const contentType = res.headers.get("content-type") || "";
+    es.addEventListener("status", (e) => {
+      const d = JSON.parse(e.data);
+      statusText.textContent = d.message;
+    });
 
-      if (res.body && !contentType.includes("application/json")) {
-        // Stream text output (e.g. logs) into the <pre>
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
+    es.addEventListener("progress", (e) => {
+      const p = JSON.parse(e.data);
+      if (p.percent !== undefined) {
+        statusBar.style.width = `${p.percent}%`;
+        statusText.textContent = `Downloading… ${p.percent.toFixed(1)}%`;
+      }
+      if (p.speed) {
+        statusText.textContent += ` (${p.speed})`;
+      }
+    });
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          statusEl.textContent = buffer;
-          statusEl.scrollTop = statusEl.scrollHeight;
-          if (buffer.includes("SQLITE_CONSTRAINT: UNIQUE constraint failed: videos.path")) {
-            statusEl.textContent += "\nError: Video already exists in the database\n";
-            addStatusClose.disabled = false;
-          }
-          if (buffer.includes("=== DONE ===")) {
-            addStatusClose.disabled = false;
-          }
+    es.addEventListener("log", (e) => {
+      const line = JSON.parse(e.data).line;
+
+      // Always append raw log
+      statusLog.textContent += line + "\n";
+      statusLog.scrollTop = statusLog.scrollHeight;
+
+      // Parse yt-dlp download progress lines
+      // Example:
+      // [download] 100.0% of    3.75MiB at   68.14MiB/s ETA 00:00
+      const match = line.match(/\[download\]\s+([\d.]+)%.*?at\s+([^\s]+).*?ETA\s+([0-9:]+)/i);
+      if (match) {
+        const percent = parseFloat(match[1]);
+        const speed = match[2];
+        const eta = match[3];
+
+        if (!Number.isNaN(percent)) {
+          statusBar.style.width = `${percent}%`;
+          statusText.textContent = `Downloading… ${percent.toFixed(1)}% (${speed}, ETA ${eta})`;
         }
+      }
+    });
 
-        // We're done; don't try to parse JSON after streaming
-        return;
+    es.addEventListener("video", (e) => {
+      const v = JSON.parse(e.data);
+      statusText.textContent = `Added: ${v.artist || ""} ${v.title || ""}`;
+    });
+
+    es.addEventListener("meta", (e) => {
+      const meta = JSON.parse(e.data);
+
+      if (meta.thumbnail) {
+        addMetaThumb.src = meta.thumbnail;
       }
 
-      // Fallback to original JSON behaviour if backend still returns JSON
-      const json = await res.json();
-      if (!json.ok) {
-        statusEl.textContent += "\nError: " + json.error;
-      } else {
-        statusEl.textContent +=
-          "\nAdded: " + json.video.artist + " - " + json.video.title;
-        form.reset();
-        addStatusClose.disabled = false;
+      if (meta.artist || meta.uploader) {
+        addMetaArtist.textContent = meta.artist || meta.uploader;
       }
-    } catch (err) {
-      if (err.message.includes("SQLITE_CONSTRAINT")) {
-        statusEl.textContent += "\nError: Video already exists in the database\n";
-      } else {
-        statusEl.textContent += "\nRequest failed: " + err.message;
+
+      if (meta.track || meta.title) {
+        addMetaTrack.textContent = meta.track || meta.title;
       }
+
+      addMeta.classList.remove("hidden");
+    });
+
+    es.addEventListener("done", () => {
+      statusText.textContent = "Import complete 🎉";
+      statusBar.style.width = "100%";
+      es.close();
+      form.reset();
       addStatusClose.disabled = false;
-    }
+    });
+
+    es.addEventListener("error", (e) => {
+      try {
+        const err = JSON.parse(e.data);
+        statusText.textContent = "Error: " + err.message;
+      } catch {
+        statusText.textContent = "Import failed";
+      }
+      es.close();
+      addStatusClose.disabled = false;
+    });
   });
 }

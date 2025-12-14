@@ -15,18 +15,33 @@ export async function checkUserSetup(req, res, next) {
 // Middleware: require valid JWT, fetch user from DB
 export async function requireAuth(req, res, next) {
   const token = req.cookies.auth;
-  if (!token) return res.redirect("/login");
+
+  // If no token, handle SSE vs normal requests differently
+  if (!token) {
+    if (req.headers.accept === "text/event-stream") {
+      return res.status(401).end();
+    }
+    return res.redirect("/login");
+  }
 
   try {
     const payload = jwt.verify(token, process.env.SESSION_SECRET);
     const db = await dbPromise;
     const user = await db.get("SELECT id, username FROM users WHERE id = ?", payload.user_id);
 
-    if (!user) return res.redirect("/login");
+    if (!user) {
+      if (req.headers.accept === "text/event-stream") {
+        return res.status(401).end();
+      }
+      return res.redirect("/login");
+    }
 
     req.user = user;
     next();
   } catch (e) {
+    if (req.headers.accept === "text/event-stream") {
+      return res.status(401).end();
+    }
     return res.redirect("/login");
   }
 }
