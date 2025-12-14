@@ -54,14 +54,15 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
   ('bitrate_audio', '128k'),
   ('buffer_size', '10000k'),
   ('ffmpeg_profile', 'main'),
-  ('output_rtmp_url', 'rtmp://live.scuzz.rocks/e980f095-65be-4b2b-b506-93840d3bb363.stream/scuzz'),
+  ('output_rtmp_url', null),
   ('ident_playlist', 'idents'),
   ('ad_playlist', 'ads'),
   ('no_repeat_minutes', '20'),
   ('media_dir', './media'),
   ('ytd_user', null),
   ('ytd_pass', null),
-  ('lastFMKey', null);
+  ('lastFMKey', null),
+  ('rtmp_enabled', 'false');
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

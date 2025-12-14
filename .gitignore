@@ -138,7 +138,7 @@ dist
 
 # Flux TV Ignores
 public/hls/*
-media/*.mp4
+media/*/*.mp4
 db/panel.sqlite
 db/panel.sqlite-shm
 db/panel.sqlite-wal
