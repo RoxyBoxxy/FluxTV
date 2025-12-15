@@ -1,12 +1,13 @@
 {
   "name": "FluxTV",
-  "version": "0.0.1",
+  "version": "0.0.6",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev:css": "npx tailwindcss -i ./public/tailwind.css -o ./public/styles.css",
     "build": "npx esbuild ./src/main.js --bundle --outfile=./public/core.js",
-    "release": "standard-version"
+    "release": "standard-version",
+    "build:asv": "enmav --update-version"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
