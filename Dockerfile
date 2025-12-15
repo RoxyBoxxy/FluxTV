@@ -63,9 +63,7 @@ RUN git clone https://gitlab.com/AOMediaCodec/SVT-AV1.git && \
     make install
 
 # Clone FFmpeg 8.x
-RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
-    cd ffmpeg && \
-    git checkout release/8.0
+RUN git clone --branch release/8.0 --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg
 
 # Configure full-feature FFmpeg build
 RUN cd ffmpeg && ./configure \
@@ -107,22 +105,12 @@ RUN cd ffmpeg && ./configure \
   --enable-indev=all \
   --enable-outdev=all
 
-RUN cd ffmpeg && make -j$(nproc)
+RUN --mount=type=cache,target=/root/.cache \
+    cd ffmpeg && make -j$(nproc)
 
 RUN apt-get update && apt-get install -y fonts-dejavu-core
 
 
-ARG TARGETARCH
-RUN echo "Installing yt-dlp for architecture: ${TARGETARCH}" && \
-    if [ "$TARGETARCH" = "amd64" ]; then \
-        curl -L -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux; \
-    elif [ "$TARGETARCH" = "arm64" ]; then \
-        curl -L -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64; \
-    else \
-        echo "Unsupported architecture: $TARGETARCH" && exit 1; \
-    fi && \
-    chmod +x /usr/local/bin/yt-dlp && \
-    yt-dlp --version
 # -----------------------------
 # STAGE 2 — Final Node runtime
 # -----------------------------
@@ -146,7 +134,7 @@ RUN apt-get update && apt-get install -y \
     libbluray2 \
     libaom3 \
     libsoxr0 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*ßß
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy all runtime shared libraries from the build stage
 COPY --from=ffmpeg-build /usr/local/lib/*.so* /usr/local/lib/
@@ -181,7 +169,7 @@ RUN echo "Installing yt-dlp for architecture: ${TARGETARCH}" && \
 COPY package*.json ./
 
 # Install dependencies (best practice)
-RUN npm install
+RUN npm ci
 
 # Copy the full project
 COPY engine ./engine
