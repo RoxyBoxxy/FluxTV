@@ -1,7 +1,7 @@
 # -----------------------------
 # STAGE 1 — Build full FFmpeg 8.x
 # -----------------------------
-FROM ghcr.io/roxyboxxy/fluxtv:dev
+FROM ghcr.io/fluxtv-inc/fluxtv:latest
 
 WORKDIR /app
 
