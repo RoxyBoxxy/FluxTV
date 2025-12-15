@@ -45,4 +45,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/roxyboxxy/fluxtv:dev
-            ghcr.io/roxyboxxy/fluxtv:${{ github.sha }}
+            ghcr.io/roxyboxxy/fluxtv:${{ steps.pkg.outputs.version }}
