@@ -1,24 +1,150 @@
 <%- include("layout", { title: "Playlist Editor", user, body: `
-<div class="space-y-8">
+<div class="space-y-10">
+  <section class="rounded-3xl border border-white/5 bg-black/40 p-6 shadow-[0_0_40px_rgba(40,10,70,0.65)] flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div>
+      <p class="text-xs uppercase tracking-[0.35em] text-purple-200/70 mb-2">TV Schedule Builder</p>
+      <h1 id="playlistMeta" class="text-3xl font-semibold text-white">Playlist #${playlistId}</h1>
+      <p class="text-sm text-gray-300 mt-1 max-w-xl">Drag videos into the playlist timeline to build your broadcast schedule.</p>
+    </div>
 
-  <section class="space-y-4 max-w-3xl">
-    <h1 class="text-3xl font-bold">Playlist Editor</h1>
+    <div class="w-full lg:w-72">
+      <label class="block text-xs font-semibold text-gray-300 mb-2 uppercase tracking-[0.2em]">Switch playlist</label>
+      <select id="playlistPicker"
+        class="w-full px-4 py-2.5 rounded-xl bg-black/70 border border-white/10 focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm text-white">
+        <option>Loading playlists…</option>
+      </select>
+    </div>
+  </section>
 
-    <p class="text-gray-300">Editing playlist ID: ${playlistId}</p>
+  <section class="rounded-3xl border border-white/5 bg-black/35 p-6 shadow-[0_0_35px_rgba(25,5,45,0.7)]">
+    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div>
+        <p class="text-xs uppercase tracking-[0.35em] text-purple-300/70">Schedule</p>
+        <h2 class="text-xl font-semibold text-white">Active days</h2>
+        <p class="text-sm text-gray-400">Choose which days this playlist should auto-run.</p>
+      </div>
+      <form id="playlistDaysForm" class="space-y-3">
+        <div class="grid grid-cols-4 gap-2 text-xs text-gray-200">
+          <label class="day-toggle">
+            <input type="checkbox" value="sun" data-day-checkbox>
+            <span>Sun</span>
+          </label>
+          <label class="day-toggle">
+            <input type="checkbox" value="mon" data-day-checkbox>
+            <span>Mon</span>
+          </label>
+          <label class="day-toggle">
+            <input type="checkbox" value="tue" data-day-checkbox>
+            <span>Tue</span>
+          </label>
+          <label class="day-toggle">
+            <input type="checkbox" value="wed" data-day-checkbox>
+            <span>Wed</span>
+          </label>
+          <label class="day-toggle">
+            <input type="checkbox" value="thu" data-day-checkbox>
+            <span>Thu</span>
+          </label>
+          <label class="day-toggle">
+            <input type="checkbox" value="fri" data-day-checkbox>
+            <span>Fri</span>
+          </label>
+          <label class="day-toggle">
+            <input type="checkbox" value="sat" data-day-checkbox>
+            <span>Sat</span>
+          </label>
+        </div>
+        <div class="flex items-center justify-end gap-3">
+          <p id="playlistDaysCaption" class="text-[0.7rem] text-gray-400 flex-1">Runs daily by default.</p>
+          <button type="submit"
+            class="px-4 py-2 rounded-xl border border-white/15 text-sm text-purple-100 hover:bg-purple-900/30 transition">
+            Save schedule
+          </button>
+        </div>
+        <p id="playlistDaysStatus" class="text-[0.75rem] text-gray-400"></p>
+      </form>
+    </div>
+  </section>
 
-    <!-- Drag & Drop Playlist List -->
-    <ul id="playlist"
-      class="space-y-2">
-      <!-- playlist.js will populate li items -->
-    </ul>
+  <section class="grid gap-8 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+    <!-- Library -->
+    <div class="space-y-4 rounded-3xl border border-white/5 bg-black/35 p-6 shadow-[0_0_35px_rgba(25,5,45,0.7)] h-[70vh] flex flex-col">
+      <div class="flex flex-wrap gap-3 items-end">
+        <div class="flex-1 min-w-[240px]">
+          <label class="block text-sm font-medium mb-1 text-gray-200">Search library</label>
+          <div class="relative">
+            <input id="librarySearch"
+              placeholder="Filter by title, artist, genre, or year"
+              class="w-full px-4 py-2.5 rounded-xl bg-black/70 border border-white/10 focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm text-gray-100"
+            />
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">⌘K</span>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400">Drag cards from the library into the playlist.</p>
+      </div>
 
-    <button id="save"
-      class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition">
-      Save Order
-    </button>
+      <div id="videoLibrary"
+        class="space-y-3 overflow-y-auto pr-2 text-sm text-gray-100 flex-1">
+        <div class="text-center py-10 text-gray-400 text-sm">Loading library…</div>
+      </div>
+    </div>
+
+    <!-- Playlist -->
+    <div class="space-y-4 rounded-3xl border border-white/5 bg-black/35 p-6 shadow-[0_0_35px_rgba(25,5,45,0.7)] h-[70vh] flex flex-col">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-semibold text-white">Playlist timeline</h2>
+          <p id="playlistCount" class="text-sm text-gray-400">0 items scheduled</p>
+        </div>
+        <button id="playlistSave"
+          class="px-4 py-2 rounded-xl border border-white/15 text-sm text-purple-100 hover:bg-purple-900/30 transition">
+          Save order
+        </button>
+      </div>
+
+      <div class="rounded-2xl border border-white/10 bg-black/30 overflow-y-auto pr-2 flex-1">
+        <ul id="playlistItems" class="p-3 space-y-3 text-sm text-gray-100 min-h-[420px]">
+          <li class="text-center text-gray-500 text-sm py-10">Drop videos here to start building your schedule.</li>
+        </ul>
+      </div>
+
+      <p id="playlistStatus" class="text-xs text-gray-400"></p>
+    </div>
   </section>
 
   <script id="playlistId" data-playlist-id="${playlistId}"></script>
-
 </div>
 ` }) %>
+      <style>
+        .day-toggle {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.4rem;
+          padding: 0.35rem 0.75rem;
+          border-radius: 0.75rem;
+          background: rgba(0, 0, 0, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: #d1c4f7;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .day-toggle input[type="checkbox"] {
+          display: none;
+        }
+        .day-toggle input[type="checkbox"]:checked + span {
+          background: linear-gradient(135deg, rgba(179,107,255,0.5), rgba(255,93,218,0.45));
+          border-color: rgba(255, 255, 255, 0.3);
+          color: #fff;
+          box-shadow: 0 0 15px rgba(179,107,255,0.55);
+        }
+        .day-toggle span {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0.15rem 0.4rem;
+          border-radius: 0.65rem;
+          transition: all 0.2s ease;
+        }
+      </style>

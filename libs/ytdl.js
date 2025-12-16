@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import dbPromise from "./db.js";
@@ -31,6 +31,25 @@ const YTDLP_HARDEN_ARGS = [
   "--sleep-interval", "1",
   "--max-sleep-interval", "5"
 ];
+
+function probeDurationSeconds(filePath) {
+  try {
+    const result = spawnSync("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath
+    ], { encoding: "utf8" });
+    const parsed = parseFloat(result.stdout?.trim());
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  } catch (err) {
+    console.warn("ffprobe duration lookup failed:", err.message);
+  }
+  return null;
+}
 
 function runYtDlp(args) {
   return new Promise(async (resolve, reject) => {
@@ -227,9 +246,13 @@ export async function addVideoFromUrl(url, callbacks = {}) {
 
     const artistSafe = safeName(artist);
     const trackSafe = safeName(track);
-    const relPath = path.join(artistSafe, `${trackSafe}.mp4`);
-    const fullDir = path.join(MEDIA_ROOT, artistSafe);
-    const fullPath = path.join(MEDIA_ROOT, relPath);
+    const relDir = artistSafe;
+    const relFile = `${trackSafe}.mp4`;
+    const relPath = path.join(relDir, relFile);
+    const fullDir = path.join(MEDIA_ROOT, relDir);
+    const finalPath = path.join(fullDir, relFile);
+    const tempBase = path.join(fullDir, trackSafe);
+    const tempOutput = `${tempBase}.%(ext)s`;
 
     fs.mkdirSync(fullDir, { recursive: true });
 
@@ -247,24 +270,41 @@ export async function addVideoFromUrl(url, callbacks = {}) {
       "-f",
       "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4][vcodec^=avc1]",
       "-o",
-      fullPath,
+      tempOutput,
       "--no-warnings",
       entry.url || entry.id
     ]);
 
     onLog("✅ Download complete");
 
+    const possibleOutputs = [`${tempBase}.mp4`, `${tempBase}.mkv`, `${tempBase}.webm`];
+    let downloadedPath = null;
+    for (const p of possibleOutputs) {
+      if (fs.existsSync(p)) {
+        downloadedPath = p;
+        break;
+      }
+    }
+
+    if (downloadedPath && downloadedPath !== finalPath) {
+      fs.renameSync(downloadedPath, finalPath);
+      downloadedPath = finalPath;
+    } else if (!downloadedPath) {
+      downloadedPath = finalPath;
+    }
+
     const meta = await fetchYearAndGenre(artist, track, year);
+    let durationSeconds = probeDurationSeconds(downloadedPath) ?? duration;
 
     const result = await db.run(
       `INSERT INTO videos (path, title, artist, year, genre, duration, is_ident, source_url)
        VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
-      relPath,
+      relPath.replace(/\\/g, "/"),
       track,
       artist,
       meta.year,
       meta.genre,
-      duration,
+      durationSeconds,
       entry.url || url
     );
 

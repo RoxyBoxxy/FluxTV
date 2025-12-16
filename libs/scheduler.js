@@ -5,6 +5,7 @@ import dbPromise from "./db.js";
 
 
 const UDP_TARGET = "udp://127.0.0.1:554?pkt_size=1316";
+const PLAYLIST_DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const NP_FILE = "./overlay/nowplaying.txt";
 const ISNEW_FILE = "./overlay/isnew.txt";
 const NP_TITLE_FILE = "./overlay/title.txt";
@@ -148,39 +149,89 @@ async function pickNextTrack(allowedGenres = null, forceIdent = false) {
     }
   }
 
+  const todayKey = PLAYLIST_DAY_KEYS[new Date().getDay()];
+  let activePlaylist = await db.get(
+    "SELECT id, active_days FROM playlists WHERE is_active = 1 ORDER BY id LIMIT 1"
+  );
+  if (activePlaylist) {
+    const allowed = (activePlaylist.active_days || "")
+      .split(",")
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    if (allowed.length && !allowed.includes(todayKey)) {
+      activePlaylist = null;
+    }
+  }
+
   let row;
-  if (allowedGenres && allowedGenres.length) {
-    const placeholders = allowedGenres.map(() => "?").join(",");
+  if (activePlaylist) {
     row = await db.get(
       `
-      SELECT id, path, title, artist, year, genre, duration
-      FROM videos
-      WHERE is_ident = 0
-      AND genre IN (${placeholders})
-      AND id NOT IN (
-        SELECT video_id
-        FROM playout_log
-        WHERE played_at >= datetime('now', '-' || ? || ' minutes')
-      )
-      ORDER BY RANDOM() LIMIT 1
+      SELECT v.id, v.path, v.title, v.artist, v.year, v.genre, v.duration
+      FROM playlist_items pi
+      JOIN videos v ON v.id = pi.video_id
+      WHERE pi.playlist_id = ?
+        AND v.is_ident = 0
+        AND v.id NOT IN (
+          SELECT video_id FROM playout_log
+          WHERE played_at >= datetime('now', '-' || ? || ' minutes')
+        )
+      ORDER BY pi.position ASC
+      LIMIT 1
       `,
-      [...allowedGenres, noRepeatMinutes]
-    );
-  } else {
-    row = await db.get(
-      `
-      SELECT id, path, title, artist, year, genre, duration
-      FROM videos
-      WHERE is_ident = 0
-      AND id NOT IN (
-        SELECT video_id
-        FROM playout_log
-        WHERE played_at >= datetime('now', '-' || ? || ' minutes')
-      )
-      ORDER BY RANDOM() LIMIT 1
-      `,
+      activePlaylist.id,
       noRepeatMinutes
     );
+    if (!row) {
+      row = await db.get(
+        `
+        SELECT v.id, v.path, v.title, v.artist, v.year, v.genre, v.duration
+        FROM playlist_items pi
+        JOIN videos v ON v.id = pi.video_id
+        WHERE pi.playlist_id = ?
+          AND v.is_ident = 0
+        ORDER BY pi.position ASC
+        LIMIT 1
+        `,
+        activePlaylist.id
+      );
+    }
+  }
+
+  if (!row) {
+    if (allowedGenres && allowedGenres.length) {
+      const placeholders = allowedGenres.map(() => "?").join(",");
+      row = await db.get(
+        `
+        SELECT id, path, title, artist, year, genre, duration
+        FROM videos
+        WHERE is_ident = 0
+        AND genre IN (${placeholders})
+        AND id NOT IN (
+          SELECT video_id
+          FROM playout_log
+          WHERE played_at >= datetime('now', '-' || ? || ' minutes')
+        )
+        ORDER BY RANDOM() LIMIT 1
+        `,
+        [...allowedGenres, noRepeatMinutes]
+      );
+    } else {
+      row = await db.get(
+        `
+        SELECT id, path, title, artist, year, genre, duration
+        FROM videos
+        WHERE is_ident = 0
+        AND id NOT IN (
+          SELECT video_id
+          FROM playout_log
+          WHERE played_at >= datetime('now', '-' || ? || ' minutes')
+        )
+        ORDER BY RANDOM() LIMIT 1
+        `,
+        noRepeatMinutes
+      );
+    }
   }
 
   if (row) {

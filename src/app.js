@@ -141,10 +141,27 @@
       setInterval(refreshNowPlaying, 5000);
     }
 
-    function initDashboardPlaylists() {
-      const container = document.getElementById("playlists");
-      const form = document.getElementById("newPlaylistForm");
-      if (!container && !form) return;
+  function initDashboardPlaylists() {
+    const container = document.getElementById("playlists");
+    const form = document.getElementById("newPlaylistForm");
+    if (!container && !form) return;
+    const dayLabels = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+    const formatActiveDays = (value) => {
+      const cleaned = (value || "")
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      if (!cleaned.length) return "Runs daily";
+      const order = ["sun","mon","tue","wed","thu","fri","sat"];
+      cleaned.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      return cleaned
+        .map((key) => {
+          const idx = order.indexOf(key);
+          return idx >= 0 ? dayLabels[idx] : key;
+        })
+        .join(", ");
+    };
 
       async function loadPlaylists() {
         if (!container) return;
@@ -152,14 +169,30 @@
         const pls = await res.json();
         container.innerHTML = "";
         pls.forEach((p) => {
-          const div = document.createElement("div");
-          div.innerHTML = `
-            <strong>${p.name}</strong> - ${p.description || ""} 
-            ${p.is_active ? "(active)" : ""}
-            <a href="/playlists/${p.id}">Edit</a>
-            <button data-id="${p.id}" class="activate-btn">Set active</button>
+          const card = document.createElement("div");
+          card.className =
+            "flex flex-col gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 md:flex-row md:items-center md:justify-between";
+          card.innerHTML = `
+            <div>
+              <p class="text-sm font-semibold text-white">${p.name}</p>
+              <p class="text-xs text-gray-400">${p.description || "No description"}</p>
+              <p class="text-[0.7rem] text-gray-500 mt-1">${formatActiveDays(p.active_days)}</p>
+              ${p.is_active ? '<span class="text-xs text-emerald-300 inline-flex items-center gap-1 mt-1">● Active</span>' : ""}
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <a href="/playlists/${p.id}" class="px-3 py-1.5 rounded-xl border border-white/15 text-purple-100 hover:bg-purple-900/30 transition">Open</a>
+              <button data-id="${p.id}" class="activate-btn px-3 py-1.5 rounded-xl border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/20 transition" ${p.is_active ? "disabled" : ""}>
+                Set active
+              </button>
+              <button data-id="${p.id}" class="disable-btn px-3 py-1.5 rounded-xl border border-yellow-400/40 text-yellow-200 hover:bg-yellow-500/20 transition" ${p.is_active ? "" : "disabled"}>
+                Disable
+              </button>
+              <button data-id="${p.id}" class="delete-btn px-3 py-1.5 rounded-xl border border-red-400/40 text-red-200 hover:bg-red-500/20 transition">
+                Delete
+              </button>
+            </div>
           `;
-          container.appendChild(div);
+          container.appendChild(card);
         });
 
         container.querySelectorAll(".activate-btn").forEach((btn) => {
@@ -169,15 +202,37 @@
             loadPlaylists();
           });
         });
+
+        container.querySelectorAll(".disable-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.dataset.id;
+            await fetch(`/api/playlists/${id}/deactivate`, { method: "POST" });
+            loadPlaylists();
+          });
+        });
+
+        container.querySelectorAll(".delete-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.dataset.id;
+            if (!confirm("Delete this playlist? This cannot be undone.")) return;
+            await fetch(`/api/playlists/${id}`, { method: "DELETE" });
+            loadPlaylists();
+          });
+        });
       }
 
       form?.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const data = Object.fromEntries(new FormData(form).entries());
+        const formData = new FormData(form);
+        const payload = {
+          name: formData.get("name"),
+          description: formData.get("description"),
+          active_days: formData.getAll("days")
+        };
         await fetch("/api/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data)
+          body: JSON.stringify(payload)
         });
         form.reset();
         loadPlaylists();
@@ -231,6 +286,18 @@
 
     loadVideos();
 
+    function formatDuration(seconds) {
+      const total = Math.round(Number(seconds) || 0);
+      if (total <= 0) return "—";
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      }
+      return `${m}:${String(s).padStart(2, "0")}`;
+    }
+
     function loadVideos(page = 1) {
       currentPage = page;
       const params = new URLSearchParams({
@@ -254,6 +321,7 @@
               <td>${v.artist || ""}</td>
               <td>${v.year || ""}</td>
               <td>${v.genre || ""}</td>
+              <td>${formatDuration(v.duration)}</td>
               <td>
                 <input type="checkbox" ${v.is_ident ? "checked" : ""} data-id="${v.id}">
               </td>
@@ -919,42 +987,395 @@
   }
 
   function initPlaylistEditor() {
-    const playlistElement = document.getElementById("playlist");
-    const saveBtn = document.getElementById("save");
     const playlistNode = document.getElementById("playlistId");
-    const playlistId = playlistNode?.dataset?.playlistId || window.playlistId;
-    if (!playlistElement || !saveBtn || !playlistId) return;
+    const playlistId = playlistNode?.dataset?.playlistId;
+    const playlistList = document.getElementById("playlistItems");
+    const libraryList = document.getElementById("videoLibrary");
+    if (!playlistId || !playlistList || !libraryList) return;
 
-    async function loadList() {
-      const res = await fetch(`/api/playlists/${playlistId}/items`);
-      const items = await res.json();
-      playlistElement.innerHTML = "";
-      items.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = `${item.artist || ""} - ${item.title || ""} [${item.genre || ""}]`;
-        li.draggable = true;
-        li.dataset.id = item.id;
-        playlistElement.appendChild(li);
+    const playlistPicker = document.getElementById("playlistPicker");
+    const playlistMeta = document.getElementById("playlistMeta");
+    const playlistCount = document.getElementById("playlistCount");
+    const playlistStatus = document.getElementById("playlistStatus");
+    const saveBtn = document.getElementById("playlistSave");
+    const searchInput = document.getElementById("librarySearch");
+    const dayForm = document.getElementById("playlistDaysForm");
+    const dayStatus = document.getElementById("playlistDaysStatus");
+    const dayCaption = document.getElementById("playlistDaysCaption");
+    const dayCheckboxes = dayForm?.querySelectorAll("[data-day-checkbox]");
+
+    let librarySortable = null;
+    let playlistSortable = null;
+    let searchTerm = "";
+    let searchDebounce = null;
+    let savingOrder = false;
+    let playlistsMeta = [];
+
+    const normalizeDuration = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    };
+
+    const formatDuration = (seconds) => {
+      const total = Math.round(Number(seconds) || 0);
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      }
+      return `${m}:${String(s).padStart(2, "0")}`;
+    };
+
+    const dayOrder = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    const formatActiveDays = (value) => {
+      const cleaned = (value || "")
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      if (!cleaned.length) return "Runs daily";
+      cleaned.sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+      return cleaned
+        .map((key) => {
+          const idx = dayOrder.indexOf(key);
+          return idx >= 0 ? dayLabels[idx] : key;
+        })
+        .join(", ");
+    };
+
+    loadPlaylists();
+    loadPlaylistItems();
+    loadLibrary();
+
+    playlistPicker?.addEventListener("change", (event) => {
+      const next = event.target.value;
+      if (next && Number(next) !== Number(playlistId)) {
+        window.location.href = `/playlists/${next}`;
+      }
+    });
+
+    searchInput?.addEventListener("input", () => {
+      searchTerm = searchInput.value.trim();
+      clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(() => loadLibrary(searchTerm), 250);
+    });
+
+    saveBtn?.addEventListener("click", () => savePlaylistOrder(true));
+
+    dayForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selected = [...(dayCheckboxes || [])].filter((cb) => cb.checked).map((cb) => cb.value);
+      if (dayStatus) dayStatus.textContent = "Saving…";
+      try {
+        const res = await fetch(`/api/playlists/${playlistId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active_days: selected })
+        });
+        if (!res.ok) throw new Error("Failed to save schedule");
+        if (dayStatus) dayStatus.textContent = "Saved schedule.";
+        loadPlaylists();
+      } catch (e) {
+        if (dayStatus) dayStatus.textContent = e.message || "Failed to save schedule.";
+      } finally {
+        if (dayStatus) {
+          setTimeout(() => {
+            dayStatus.textContent = "";
+          }, 2500);
+        }
+      }
+    });
+
+    function setPlaylistStatus(message, temporary = true) {
+      if (!playlistStatus || !message) return;
+      playlistStatus.textContent = message;
+      if (temporary) {
+        setTimeout(() => {
+          if (playlistStatus.textContent === message) playlistStatus.textContent = "";
+        }, 2500);
+      }
+    }
+
+    function syncDayForm(daysString) {
+      if (!dayCheckboxes) return;
+      const values = (daysString || "")
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean);
+      dayCheckboxes.forEach((cb) => {
+        cb.checked = values.includes(cb.value);
+      });
+      if (dayCaption) {
+        dayCaption.textContent = values.length
+          ? `Active on ${formatActiveDays(daysString)}`
+          : "Runs daily by default.";
+      }
+    }
+
+    function removePlaceholders() {
+      playlistList.querySelectorAll("[data-placeholder]").forEach((node) => node.remove());
+    }
+
+    function renderEmptyPlaceholder() {
+      if (playlistList.querySelector("[data-item-id]") || playlistList.querySelector("[data-placeholder]")) return;
+      const empty = document.createElement("li");
+      empty.dataset.placeholder = "true";
+      empty.className = "text-center text-gray-500 text-sm py-10";
+      empty.textContent = "Drop videos here to start building your schedule.";
+      playlistList.appendChild(empty);
+    }
+
+    function updatePlaylistCount(count, totalSeconds = 0) {
+      if (!playlistCount) return;
+      const durationLabel = formatDuration(totalSeconds);
+      playlistCount.textContent = `${count} item${count === 1 ? "" : "s"} • ${durationLabel}`;
+    }
+
+    function recalcPlaylistMeta() {
+      const items = [...playlistList.querySelectorAll("[data-item-id]")];
+      const totalSeconds = items.reduce(
+        (sum, el) => sum + (Number(el.dataset.duration || 0) || 0),
+        0
+      );
+      updatePlaylistCount(items.length, totalSeconds);
+      if (!items.length) renderEmptyPlaceholder();
+    }
+
+    function refreshPlaylistPositions() {
+      [...playlistList.querySelectorAll("[data-item-id]")].forEach((el, idx) => {
+        const label = el.querySelector(".slot-label");
+        if (label) label.textContent = `Slot ${idx + 1}`;
       });
     }
 
-    if (window.Sortable) {
-      new Sortable(playlistElement, {
+    async function loadPlaylists() {
+      try {
+        const res = await fetch("/api/playlists");
+        const playlists = await res.json();
+        playlistsMeta = playlists;
+        if (playlistPicker) {
+          playlistPicker.innerHTML = "";
+          playlists.forEach((pl) => {
+            const option = document.createElement("option");
+            option.value = pl.id;
+            option.textContent = pl.name || `Playlist #${pl.id}`;
+            if (Number(pl.id) === Number(playlistId)) option.selected = true;
+            playlistPicker.appendChild(option);
+          });
+        }
+        const current = playlists.find((pl) => Number(pl.id) === Number(playlistId));
+        if (playlistMeta) {
+          playlistMeta.textContent = current?.name || `Playlist #${playlistId}`;
+        }
+        syncDayForm(current?.active_days || "");
+      } catch (e) {
+        console.error("Failed to load playlists", e);
+      }
+    }
+
+    async function loadPlaylistItems() {
+      try {
+        const res = await fetch(`/api/playlists/${playlistId}/items`);
+        const items = await res.json();
+        playlistList.innerHTML = "";
+        if (!items.length) {
+          renderEmptyPlaceholder();
+        } else {
+          items.forEach((item) => playlistList.appendChild(createPlaylistItem(item)));
+        }
+        refreshPlaylistPositions();
+        recalcPlaylistMeta();
+        setupPlaylistSortable();
+      } catch (e) {
+        console.error("Failed to load playlist items", e);
+      }
+    }
+
+    async function loadLibrary(query = "") {
+      try {
+        libraryList.innerHTML = `<div class="text-center py-6 text-gray-400 text-sm">Loading library…</div>`;
+        const params = new URLSearchParams({ limit: "100" });
+        if (query) params.set("q", query);
+        const res = await fetch(`/api/videos?${params.toString()}`);
+        const data = await res.json();
+        const videos = Array.isArray(data) ? data : data.rows || [];
+        libraryList.innerHTML = "";
+        if (!videos.length) {
+          libraryList.innerHTML = `<div class="text-center py-10 text-gray-500 text-sm">No videos match that search.</div>`;
+        } else {
+          videos.forEach((video) => libraryList.appendChild(createLibraryItem(video)));
+        }
+        setupLibrarySortable();
+      } catch (e) {
+        console.error("Failed to load library", e);
+        libraryList.innerHTML = `<div class="text-center py-6 text-red-400 text-sm">Failed to load library.</div>`;
+      }
+    }
+
+    function createLibraryItem(video) {
+      const li = document.createElement("li");
+      li.dataset.videoId = video.id;
+      li.className =
+        "border border-white/10 rounded-2xl px-4 py-3 bg-white/5 backdrop-blur-sm cursor-grab hover:border-purple-400/40 transition flex items-center justify-between gap-3";
+      const durationValue = normalizeDuration(video.duration);
+      const durationLabel = formatDuration(durationValue);
+      li.innerHTML = `
+        <div>
+          <p class="font-semibold text-white">${video.artist || "Unknown"} <span class="text-gray-400">— ${
+        video.title || "Untitled"
+      }</span></p>
+          <p class="text-xs text-gray-400 uppercase tracking-wide">${video.genre || "Genre"} • ${
+        video.year || "Year"
+      } • ${durationLabel}</p>
+        </div>
+        <span class="text-xs text-gray-500">Drag</span>
+      `;
+      return li;
+    }
+
+    function createPlaylistItem(item) {
+      const li = document.createElement("li");
+      applyPlaylistCard(li, item);
+      attachPlaylistItemActions(li);
+      return li;
+    }
+
+    function applyPlaylistCard(element, item) {
+      const durationValue = normalizeDuration(item.duration);
+      element.dataset.itemId = item.id;
+      element.dataset.videoId = item.video_id;
+      element.dataset.duration = durationValue;
+      element.className =
+        "border border-white/10 rounded-2xl px-4 py-3 bg-gradient-to-r from-purple-600/10 to-indigo-600/5 backdrop-blur flex items-center justify-between gap-4";
+      const durationLabel = formatDuration(durationValue);
+      element.innerHTML = `
+        <div>
+          <p class="font-semibold text-white">${item.artist || "Unknown"} <span class="text-gray-300">— ${
+        item.title || "Untitled"
+      }</span></p>
+          <p class="text-xs text-gray-400 uppercase tracking-wide">${item.genre || "Genre"} • ${durationLabel}</p>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-gray-400">
+          <span class="slot-label hidden sm:inline">Slot ${item.position || "—"}</span>
+          <span class="drag-handle cursor-grab text-lg leading-none text-white/60 hover:text-white">⋮⋮</span>
+          <button class="playlist-item-delete px-2 py-1 rounded-lg border border-red-400/40 text-red-200 hover:bg-red-500/20 transition">
+            Remove
+          </button>
+        </div>
+      `;
+    }
+
+    function attachPlaylistItemActions(element) {
+      const deleteBtn = element.querySelector(".playlist-item-delete");
+      deleteBtn?.addEventListener("click", () => {
+        removePlaylistItem(element.dataset.itemId, element);
+      });
+    }
+
+    function setupLibrarySortable() {
+      if (!window.Sortable) return;
+      if (librarySortable) {
+        librarySortable.destroy();
+      }
+      librarySortable = new Sortable(libraryList, {
+        group: { name: "playlist-videos", pull: "clone", put: false },
+        sort: false,
         animation: 150,
         ghostClass: "opacity-50"
       });
     }
 
-    saveBtn.addEventListener("click", async () => {
-      const order = [...playlistElement.querySelectorAll("li")].map((li) => Number(li.dataset.id));
-      await fetch(`/api/playlists/${playlistId}/order`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order })
+    function setupPlaylistSortable() {
+      if (!window.Sortable) return;
+      if (playlistSortable) {
+        playlistSortable.destroy();
+      }
+      playlistSortable = new Sortable(playlistList, {
+        group: { name: "playlist-videos", pull: true, put: true },
+        animation: 200,
+        ghostClass: "opacity-50",
+        handle: ".drag-handle",
+        onAdd(evt) {
+          const videoId = evt.item.dataset.videoId;
+          if (!videoId) return;
+          removePlaceholders();
+          if (evt.item.dataset.itemId) return;
+          addVideoToPlaylist(videoId, evt.item);
+        },
+        onUpdate() {
+          savePlaylistOrder();
+        }
       });
-      alert("Order saved");
-    });
+    }
 
-    loadList();
+    async function addVideoToPlaylist(videoId, element) {
+      try {
+        const res = await fetch(`/api/playlists/${playlistId}/add`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ video_id: Number(videoId) })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok || !data.item) {
+          throw new Error(data.error || "Failed to add video");
+        }
+        applyPlaylistCard(element, data.item);
+        attachPlaylistItemActions(element);
+        refreshPlaylistPositions();
+        recalcPlaylistMeta();
+        await savePlaylistOrder();
+        setPlaylistStatus("Added video to playlist.");
+      } catch (e) {
+        console.error(e);
+        element.remove();
+        recalcPlaylistMeta();
+        alert(e.message || "Failed to add video to playlist");
+      }
+    }
+
+    async function removePlaylistItem(itemId, element) {
+      if (!itemId) return;
+      element.classList.add("opacity-50");
+      try {
+        const res = await fetch(`/api/playlists/${playlistId}/items/${itemId}`, {
+          method: "DELETE"
+        });
+        if (!res.ok) throw new Error("Failed to remove item");
+        element.remove();
+        refreshPlaylistPositions();
+        recalcPlaylistMeta();
+        setPlaylistStatus("Removed item from playlist.");
+      } catch (e) {
+        element.classList.remove("opacity-50");
+        alert(e.message || "Failed to remove item");
+      }
+    }
+
+    async function savePlaylistOrder(showMessage = false) {
+      if (savingOrder) return;
+      const order = [...playlistList.querySelectorAll("[data-item-id]")].map((li) =>
+        Number(li.dataset.itemId)
+      );
+      if (!order.length) return;
+      savingOrder = true;
+      try {
+        const res = await fetch(`/api/playlists/${playlistId}/order`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ order })
+        });
+        if (!res.ok) throw new Error("Failed to save order");
+        refreshPlaylistPositions();
+        recalcPlaylistMeta();
+        if (showMessage) setPlaylistStatus("Playlist order saved.");
+      } catch (e) {
+        console.error(e);
+        alert(e.message || "Failed to save playlist order");
+      } finally {
+        savingOrder = false;
+      }
+    }
   }
 })();

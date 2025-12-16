@@ -20,7 +20,7 @@ import { fetchYearAndGenre } from "./libs/metaFetch.js";
 import { publishChannel } from "./libs/publish.js";
 import fs from "fs";
 import os from "os";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 
 const app = express();
 
@@ -31,6 +31,7 @@ const MEDIA_ROOT = process.env.MEDIA_ROOT || DEFAULT_MEDIA_ROOT;
 const MANUAL_UPLOAD_ROOT = DEFAULT_MEDIA_ROOT;
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "changeme";
+const PLAYLIST_DAY_KEYS = ["sun","mon","tue","wed","thu","fri","sat"];
 
 app.set("view engine", "ejs");
 app.set("views", path.join(process.cwd(), "views"));
@@ -96,6 +97,41 @@ async function ensureAndRebuildVideoFts({ rebuild = false } = {}) {
     await db.exec(`INSERT INTO videos_fts(videos_fts) VALUES('rebuild');`);
   }
   await db.exec(`INSERT INTO videos_fts(videos_fts) VALUES('optimize');`);
+}
+
+async function ensurePlaylistDaysColumn() {
+  try {
+    const db = await dbPromise;
+    const columns = await db.all("PRAGMA table_info(playlists)");
+    const has = columns.some((col) => col.name === "active_days");
+    if (!has) {
+      await db.run("ALTER TABLE playlists ADD COLUMN active_days TEXT DEFAULT ''");
+    }
+  } catch (e) {
+    console.warn("playlist active_days column ensure failed:", e.message);
+  }
+}
+
+await ensurePlaylistDaysColumn();
+
+function normalizeActiveDays(input) {
+  if (!input) return "";
+  const values = Array.isArray(input) ? input : String(input).split(",");
+  const seen = new Set();
+  const normalized = [];
+  values.forEach((val) => {
+    const key = String(val || "")
+      .trim()
+      .toLowerCase()
+      .slice(0, 3);
+    const idx = PLAYLIST_DAY_KEYS.indexOf(key);
+    if (idx !== -1 && !seen.has(key)) {
+      seen.add(key);
+      normalized.push({ key, idx });
+    }
+  });
+  normalized.sort((a, b) => a.idx - b.idx);
+  return normalized.map((n) => n.key).join(",");
 }
 
 
@@ -226,6 +262,15 @@ app.get("/users", requireAuth, (req, res) => {
   res.render("users", { user: req.user });
 });
 
+app.get("/playlists", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const row = await db.get("SELECT id FROM playlists ORDER BY id LIMIT 1");
+  if (row?.id) {
+    return res.redirect(`/playlists/${row.id}`);
+  }
+  res.status(404).send("No playlists available. Create one first.");
+});
+
 // playlist editor
 app.get("/playlists/:id", requireAuth, (req, res) => {
   res.render("playlist", { user: req.user, playlistId: req.params.id });
@@ -276,6 +321,25 @@ function sanitizeSegment(input, fallback) {
   return input.replace(/[\\/]+/g, " ").replace(/[\r\n]/g, "").trim() || fallback;
 }
 
+function probeFileDuration(filePath) {
+  try {
+    const res = spawnSync("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath
+    ], { encoding: "utf8" });
+    const parsed = parseFloat(res.stdout?.trim());
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  } catch (err) {
+    console.warn("ffprobe duration lookup failed:", err.message);
+  }
+  return null;
+}
+
 function ensureUniquePath(baseDir, artistSegment, titleSegment, ext) {
   const safeArtist = sanitizeSegment(artistSegment, "Manual Uploads");
   const safeTitle = sanitizeSegment(titleSegment, "Untitled");
@@ -288,6 +352,28 @@ function ensureUniquePath(baseDir, artistSegment, titleSegment, ext) {
     counter += 1;
   }
   return { rel, full, dir: path.join(baseDir, safeArtist) };
+}
+
+async function ensureVideoDurations() {
+  try {
+    const db = await dbPromise;
+    const videos = await db.all(
+      "SELECT id, path FROM videos WHERE duration IS NULL OR duration <= 0"
+    );
+    for (const video of videos) {
+      const absolute = path.join(MEDIA_ROOT, video.path);
+      if (!fs.existsSync(absolute)) continue;
+      const secs = probeFileDuration(absolute);
+      if (secs && secs > 0) {
+        await db.run("UPDATE videos SET duration = ? WHERE id = ?", secs, video.id);
+      }
+    }
+    if (videos.length) {
+      console.log(`Duration backfill complete for ${videos.length} videos without duration.`);
+    }
+  } catch (err) {
+    console.error("Video duration backfill failed:", err);
+  }
 }
 
 app.post("/api/manual-upload", requireAuth, videoUpload.single("video"), async (req, res) => {
@@ -339,6 +425,7 @@ app.post("/api/manual-upload", requireAuth, videoUpload.single("video"), async (
     await fs.promises.rename(tmpPath, full);
     savedPath = full;
 
+    const durationSeconds = probeFileDuration(savedPath);
     const meta = await fetchYearAndGenre(artistGuess, titleGuess, null);
     const result = await db.run(
       `INSERT INTO videos (path, title, artist, year, genre, duration, is_ident, source_url)
@@ -348,7 +435,7 @@ app.post("/api/manual-upload", requireAuth, videoUpload.single("video"), async (
       artistGuess,
       meta.year,
       meta.genre,
-      null,
+      durationSeconds,
       null
     );
 
@@ -590,10 +677,12 @@ app.get("/api/playlists", requireAuth, async (req, res) => {
 app.post("/api/playlists", requireAuth, async (req, res) => {
   const db = await dbPromise;
   const { name, description } = req.body;
+  const activeDays = normalizeActiveDays(req.body.active_days || req.body.activeDays || []);
   const result = await db.run(
-    "INSERT INTO playlists (name, description) VALUES (?, ?)",
+    "INSERT INTO playlists (name, description, active_days) VALUES (?, ?, ?)",
     name,
-    description || null
+    description || null,
+    activeDays
   );
   res.json({ ok: true, id: result.lastID });
 });
@@ -613,16 +702,69 @@ app.post("/api/playlists/:id/activate", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.patch("/api/playlists/:id", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const { id } = req.params;
+  const updates = [];
+  const params = [];
+
+  if (req.body.name !== undefined) {
+    updates.push("name = ?");
+    params.push(req.body.name);
+  }
+  if (req.body.description !== undefined) {
+    updates.push("description = ?");
+    params.push(req.body.description || null);
+  }
+  if (req.body.active_days !== undefined || req.body.activeDays !== undefined) {
+    const normalized = normalizeActiveDays(req.body.active_days || req.body.activeDays || []);
+    updates.push("active_days = ?");
+    params.push(normalized);
+  }
+
+  if (!updates.length) {
+    return res.json({ ok: true });
+  }
+
+  params.push(id);
+  await db.run(`UPDATE playlists SET ${updates.join(", ")} WHERE id = ?`, params);
+  res.json({ ok: true });
+});
+
+app.post("/api/playlists/:id/deactivate", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const { id } = req.params;
+  await db.run("UPDATE playlists SET is_active = 0 WHERE id = ?", id);
+  res.json({ ok: true });
+});
+
+app.delete("/api/playlists/:id", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const { id } = req.params;
+  await db.run("DELETE FROM playlists WHERE id = ?", id);
+  res.json({ ok: true });
+});
+
 // playlist items
 app.get("/api/playlists/:id/items", requireAuth, async (req, res) => {
   const db = await dbPromise;
-  const rows = await db.all(`
-    SELECT pi.id, pi.video_id, pi.position, v.title, v.artist, v.genre
+  const rows = await db.all(
+    `
+    SELECT
+      pi.id,
+      pi.video_id,
+      pi.position,
+      v.title,
+      v.artist,
+      v.genre,
+      COALESCE(v.duration, 0) AS duration
     FROM playlist_items pi
     JOIN videos v ON v.id = pi.video_id
     WHERE pi.playlist_id = ?
     ORDER BY pi.position ASC
-  `, req.params.id);
+  `,
+    req.params.id
+  );
   res.json(rows);
 });
 
@@ -630,17 +772,64 @@ app.post("/api/playlists/:id/add", requireAuth, async (req, res) => {
   const db = await dbPromise;
   const { id } = req.params;
   const { video_id } = req.body;
+  if (!video_id) {
+    return res.status(400).json({ ok: false, error: "video_id required" });
+  }
+
   const posRow = await db.get(
     "SELECT COALESCE(MAX(position), 0) AS max_pos FROM playlist_items WHERE playlist_id = ?",
     id
   );
   const pos = (posRow?.max_pos || 0) + 1;
 
-  await db.run(`
-    INSERT INTO playlist_items (playlist_id, video_id, position)
-    VALUES (?, ?, ?)
-  `, id, video_id, pos);
+  const result = await db.run(
+    `INSERT INTO playlist_items (playlist_id, video_id, position)
+     VALUES (?, ?, ?)`,
+    id,
+    video_id,
+    pos
+  );
 
+  const item = await db.get(
+    `
+    SELECT
+      pi.id,
+      pi.video_id,
+      pi.position,
+      v.title,
+      v.artist,
+      v.genre,
+      v.year,
+      COALESCE(v.duration, 0) AS duration
+    FROM playlist_items pi
+    JOIN videos v ON v.id = pi.video_id
+    WHERE pi.id = ?
+    `,
+    result.lastID
+  );
+
+  res.json({ ok: true, item });
+});
+
+app.delete("/api/playlists/:playlistId/items/:itemId", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const { playlistId, itemId } = req.params;
+  await db.run(
+    "DELETE FROM playlist_items WHERE playlist_id = ? AND id = ?",
+    playlistId,
+    itemId
+  );
+  const remaining = await db.all(
+    "SELECT id FROM playlist_items WHERE playlist_id = ? ORDER BY position ASC",
+    playlistId
+  );
+  for (let i = 0; i < remaining.length; i++) {
+    await db.run(
+      "UPDATE playlist_items SET position = ? WHERE id = ?",
+      i + 1,
+      remaining[i].id
+    );
+  }
   res.json({ ok: true });
 });
 
@@ -811,6 +1000,10 @@ const server = app.listen(PORT, () => {
   ensureAndRebuildVideoFts({ rebuild: true })
     .then(() => console.log("✅ videos_fts indexed"))
     .catch((e) => console.error("❌ videos_fts index error", e));
+
+  ensureVideoDurations()
+    .then(() => console.log("✅ video durations verified"))
+    .catch((e) => console.error("❌ duration verification failed", e));
 
   const scheduleDailyIndex = () => {
     const now = new Date();

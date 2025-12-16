@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS playlists (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   description TEXT,
-  is_active INTEGER DEFAULT 0
+  is_active INTEGER DEFAULT 0,
+  active_days TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS playlist_items (
