@@ -383,6 +383,8 @@
     const addMetaArtist = document.getElementById("addMetaArtist");
     const addMetaTrack = document.getElementById("addMetaTrack");
     if (!form || !statusText || !statusBar || !statusLog || !addStatusModal) return;
+    const manualDropZone = document.getElementById("manualUploadZone");
+    const manualFileInput = document.getElementById("manualUploadInput");
 
     function openAddModal() {
       if (typeof addStatusModal.showModal === "function") {
@@ -400,6 +402,19 @@
         addStatusModal.style.display = "none";
         addStatusModal.classList.add("hidden");
       }
+    }
+
+    function prepareStatusUI(initialMessage) {
+      statusText.textContent = initialMessage;
+      statusBar.style.width = "0%";
+      statusLog.textContent = "";
+      statusLog.classList.add("hidden");
+      if (toggleLogBtn) toggleLogBtn.textContent = "Show log";
+      addMeta?.classList.add("hidden");
+      if (addMetaThumb) addMetaThumb.src = "";
+      if (addMetaArtist) addMetaArtist.textContent = "";
+      if (addMetaTrack) addMetaTrack.textContent = "";
+      if (addStatusClose) addStatusClose.disabled = true;
     }
 
     toggleLogBtn?.addEventListener("click", () => {
@@ -421,18 +436,7 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(form).entries());
-
-      statusText.textContent = "Starting yt-dlp import…";
-      statusBar.style.width = "0%";
-      statusLog.textContent = "";
-      statusLog.classList.add("hidden");
-      if (toggleLogBtn) toggleLogBtn.textContent = "Show log";
-
-      addMeta?.classList.add("hidden");
-      if (addMetaThumb) addMetaThumb.src = "";
-      if (addMetaArtist) addMetaArtist.textContent = "";
-      if (addMetaTrack) addMetaTrack.textContent = "";
-
+      prepareStatusUI("Starting yt-dlp import…");
       openAddModal();
 
       const url = data.url;
@@ -505,90 +509,413 @@
         if (addStatusClose) addStatusClose.disabled = false;
       });
     });
+
+    const isMp4File = (file) =>
+      !!file &&
+      ((file.name && file.name.toLowerCase().endsWith(".mp4")) || file.type === "video/mp4");
+
+    function uploadManualFile(file, callback) {
+      const formData = new FormData();
+      formData.append("video", file);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/manual-upload");
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const percent = (event.loaded / event.total) * 100;
+        statusBar.style.width = `${percent}%`;
+        statusText.textContent = `Uploading… ${percent.toFixed(1)}%`;
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          statusBar.style.width = "100%";
+          callback(true);
+          return;
+        }
+        let errorMessage = "Upload failed";
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response.error) errorMessage = response.error;
+        } catch {}
+        callback(false, errorMessage);
+      };
+
+      xhr.onerror = () => {
+        callback(false, "Upload failed");
+      };
+
+      xhr.send(formData);
+    }
+
+    function handleManualUploads(fileList) {
+      if (!fileList?.length) return;
+      const files = Array.from(fileList);
+      const validFiles = files.filter(isMp4File);
+      const invalidFiles = files.filter((file) => !isMp4File(file));
+      if (!validFiles.length) {
+        window.alert("Only MP4 files are supported for manual upload.");
+        return;
+      }
+      if (invalidFiles.length) {
+        window.alert(
+          `Skipped non-MP4 files:\n${invalidFiles
+            .map((file) => file.name || "Unnamed")
+            .join(", ")}`
+        );
+      }
+
+      const total = validFiles.length;
+      let index = 0;
+      openAddModal();
+
+      const uploadNext = () => {
+        if (index >= total) {
+          statusText.textContent = "Upload complete 🎉";
+          statusBar.style.width = "100%";
+          if (addStatusClose) addStatusClose.disabled = false;
+          if (manualFileInput) manualFileInput.value = "";
+          reloadVideos();
+          return;
+        }
+
+        const currentFile = validFiles[index];
+        prepareStatusUI(`Uploading (${index + 1}/${total}) ${currentFile.name}`);
+
+        uploadManualFile(currentFile, (success, message) => {
+          if (success) {
+            reloadVideos();
+            index += 1;
+            uploadNext();
+          } else {
+            statusText.textContent = message || `Upload failed for ${currentFile.name}`;
+            if (addStatusClose) addStatusClose.disabled = false;
+          }
+        });
+      };
+
+      uploadNext();
+    }
+
+    if (manualDropZone && manualFileInput) {
+      const setDropActive = (active) => {
+        manualDropZone.style.borderColor = active ? "rgba(216, 180, 254, 0.9)" : "";
+        manualDropZone.style.backgroundColor = active ? "rgba(76, 29, 149, 0.2)" : "";
+      };
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        manualDropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setDropActive(true);
+        });
+      });
+
+      ["dragleave", "drop"].forEach((eventName) => {
+        manualDropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setDropActive(false);
+        });
+      });
+
+      manualDropZone.addEventListener("drop", (event) => {
+        const droppedFiles = event.dataTransfer?.files;
+        if (droppedFiles?.length) {
+          handleManualUploads(droppedFiles);
+        }
+      });
+
+      manualDropZone.addEventListener("click", () => {
+        manualFileInput.click();
+      });
+
+      manualFileInput.addEventListener("change", () => {
+        if (manualFileInput.files?.length) {
+          handleManualUploads(manualFileInput.files);
+        }
+      });
+    }
   }
 
   function initUsersPage() {
-    const tbody = document.querySelector("#videosTable tbody");
-    const modalOverlay = document.getElementById("modalOverlay");
-    const modalTitle = document.getElementById("modalTitle");
-    const modalContent = document.getElementById("modalContent");
-    const modalConfirm = document.getElementById("modalConfirm");
-    const modalCancel = document.getElementById("modalCancel");
-    if (!tbody || !modalOverlay || !modalTitle || !modalContent || !modalConfirm) return;
+    const page = document.getElementById("usersPage");
+    const form = document.getElementById("userForm");
+    const usernameInput = document.getElementById("userUsername");
+    const passwordInput = document.getElementById("userPassword");
+    const alertBox = document.getElementById("userFormAlert");
+    const tableBody = document.getElementById("userTableBody");
+    const userCount = document.getElementById("userCount");
+    const editDialog = document.getElementById("userEditDialog");
+    const editForm = document.getElementById("userEditForm");
+    const editUserIdInput = document.getElementById("editUserId");
+    const editUsernameInput = document.getElementById("editUsername");
+    const editPasswordInput = document.getElementById("editPassword");
+    const editAlert = document.getElementById("userEditAlert");
+    const editCancel = document.getElementById("userEditCancel");
+    const confirmDialog = document.getElementById("userConfirmDialog");
+    const confirmText = document.getElementById("userConfirmText");
+    const confirmCancel = document.getElementById("userConfirmCancel");
+    const confirmDelete = document.getElementById("userConfirmDelete");
+    const currentUsername = page?.dataset?.currentUser || "";
+    let confirmAction = null;
 
-    async function loadVideos() {
-      const res = await fetch("/api/videos");
-      const videos = await res.json();
-      tbody.innerHTML = "";
-      videos.forEach((v) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${v.id}</td>
-          <td>${v.username || "(no title)"}</td>
-          <td class="px-3 py-2 flex gap-2">
-            <button data-id="${v.id}" class="editBtn px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm">Edit</button>
-            <button data-id="${v.id}" class="deleteBtn px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm">Delete</button>
-          </td>
-        `;
-        tbody.appendChild(tr);
+    if (!form || !usernameInput || !passwordInput || !tableBody) return;
 
-        tr.querySelector(".editBtn").addEventListener("click", () => {
-          modalTitle.textContent = "Edit Video";
-          modalContent.innerHTML = `
-            <div class="space-y-3">
-              <label class="block text-sm font-medium">Title</label>
-              <input id="edit_title" value="${v.title || ""}"
-                class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded" />
+    const setAlert = (message, type = "success") => {
+      if (!alertBox) return;
+      alertBox.textContent = message;
+      alertBox.classList.remove("hidden");
+      alertBox.classList.toggle("bg-green-500/10", type === "success");
+      alertBox.classList.toggle("border-green-500/40", type === "success");
+      alertBox.classList.toggle("text-green-200", type === "success");
+      alertBox.classList.toggle("bg-red-500/10", type === "error");
+      alertBox.classList.toggle("border-red-500/40", type === "error");
+      alertBox.classList.toggle("text-red-200", type === "error");
+    };
 
-              <label class="block text-sm font-medium">Artist</label>
-              <input id="edit_artist" value="${v.artist || ""}"
-                class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded" />
+    const clearAlert = () => {
+      if (!alertBox) return;
+      alertBox.classList.add("hidden");
+      alertBox.textContent = "";
+      alertBox.classList.remove(
+        "bg-green-500/10",
+        "border-green-500/40",
+        "text-green-200",
+        "bg-red-500/10",
+        "border-red-500/40",
+        "text-red-200"
+      );
+    };
 
-              <button id="modalGrab" class="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-sm">Grab Metadata</button>
-            </div>
+    const setEditAlert = (message, type = "success") => {
+      if (!editAlert) return;
+      editAlert.textContent = message;
+      editAlert.classList.remove("hidden");
+      editAlert.classList.toggle("bg-green-500/10", type === "success");
+      editAlert.classList.toggle("border-green-500/40", type === "success");
+      editAlert.classList.toggle("text-green-200", type === "success");
+      editAlert.classList.toggle("bg-red-500/10", type === "error");
+      editAlert.classList.toggle("border-red-500/40", type === "error");
+      editAlert.classList.toggle("text-red-200", type === "error");
+    };
+
+    const clearEditAlert = () => {
+      if (!editAlert) return;
+      editAlert.classList.add("hidden");
+      editAlert.textContent = "";
+      editAlert.classList.remove(
+        "bg-green-500/10",
+        "border-green-500/40",
+        "text-green-200",
+        "bg-red-500/10",
+        "border-red-500/40",
+        "text-red-200"
+      );
+    };
+
+    const openEditDialog = (user) => {
+      if (!editDialog || !editForm || !editUserIdInput || !editUsernameInput || !editPasswordInput) return;
+      editUserIdInput.value = String(user.id);
+      editUsernameInput.value = user.username;
+      editPasswordInput.value = "";
+      clearEditAlert();
+      if (typeof editDialog.showModal === "function") {
+        editDialog.showModal();
+      } else {
+        editDialog.style.display = "block";
+      }
+    };
+
+    const closeEditDialog = () => {
+      if (!editDialog) return;
+      if (typeof editDialog.close === "function") {
+        editDialog.close();
+      } else {
+        editDialog.style.display = "none";
+      }
+    };
+
+    editCancel?.addEventListener("click", () => {
+      closeEditDialog();
+    });
+
+    const openConfirmDialog = (message, action) => {
+      if (!confirmDialog || !confirmText || !confirmDelete || !confirmCancel) return;
+      confirmText.textContent = message;
+      confirmAction = action;
+      if (typeof confirmDialog.showModal === "function") {
+        confirmDialog.showModal();
+      } else {
+        confirmDialog.style.display = "block";
+      }
+    };
+
+    const closeConfirmDialog = () => {
+      confirmAction = null;
+      if (!confirmDialog) return;
+      if (typeof confirmDialog.close === "function") {
+        confirmDialog.close();
+      } else {
+        confirmDialog.style.display = "none";
+      }
+    };
+
+    confirmCancel?.addEventListener("click", () => closeConfirmDialog());
+    confirmDelete?.addEventListener("click", () => {
+      if (confirmAction) confirmAction();
+      closeConfirmDialog();
+    });
+
+    async function loadUsers() {
+      try {
+        const res = await fetch("/api/users");
+        const users = await res.json();
+        tableBody.innerHTML = "";
+        if (!users.length) {
+          tableBody.innerHTML = `
+            <tr>
+              <td colspan="3" class="px-4 py-6 text-center text-gray-400 text-sm">
+                No users yet. Create one on the left.
+              </td>
+            </tr>
           `;
+        } else {
+          users.forEach((user) => {
+            const tr = document.createElement("tr");
+            const isCurrent = currentUsername && user.username === currentUsername;
+            tr.innerHTML = `
+              <td class="px-4 py-3 font-mono text-xs text-gray-400">#${user.id}</td>
+              <td class="px-4 py-3 font-semibold">${user.username}</td>
+              <td class="px-4 py-3">
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    data-id="${user.id}"
+                    data-username="${user.username}"
+                    class="user-edit-btn px-3 py-1.5 rounded-xl border border-white/15 text-xs text-purple-100 hover:bg-white/10 transition">
+                    Edit
+                  </button>
+                  <button
+                    data-id="${user.id}"
+                    class="user-delete-btn px-3 py-1.5 rounded-xl border border-red-400/40 text-xs text-red-200 hover:bg-red-500/20 transition ${isCurrent ? "opacity-40 cursor-not-allowed" : ""}"
+                    ${isCurrent ? "disabled" : ""}>
+                    Delete
+                  </button>
+                </div>
+              </td>
+            `;
+            tableBody.appendChild(tr);
 
-          modalConfirm.onclick = async () => {
-            await fetch(`/api/videos/${v.id}/edit`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title: document.getElementById("edit_title").value,
-                artist: document.getElementById("edit_artist").value,
-                year: document.getElementById("edit_year")?.value,
-                genre: document.getElementById("edit_genre")?.value,
-                is_ident: document.getElementById("edit_ident")?.checked
-              })
+            const editBtn = tr.querySelector(".user-edit-btn");
+            const deleteBtn = tr.querySelector(".user-delete-btn");
+
+            editBtn?.addEventListener("click", () => openEditDialog(user));
+
+            deleteBtn?.addEventListener("click", () => {
+              openConfirmDialog(
+                `Are you sure you want to delete "${user.username}"? This cannot be undone.`,
+                async () => {
+                  if (!deleteBtn) return;
+                  deleteBtn.disabled = true;
+                  try {
+                    const res = await fetch(`/api/users/${user.id}`, { method: "DELETE" });
+                    const data = await res.json();
+                    if (!res.ok || !data.ok) {
+                      alert(data.error || "Failed to delete user");
+                    } else {
+                      loadUsers();
+                    }
+                  } catch {
+                    alert("Failed to delete user");
+                  } finally {
+                    deleteBtn.disabled = false;
+                  }
+                }
+              );
             });
-            closeModal();
-            loadVideos();
-          };
-
-          modalOverlay.classList.remove("hidden");
-        });
-
-        tr.querySelector(".deleteBtn").addEventListener("click", () => {
-          modalTitle.textContent = "Delete Video";
-          modalContent.innerHTML = `
-            <p class="text-red-400">Are you sure you want to delete:<br>
-            <strong>${v.title || "(no title)"}</strong>?</p>
-          `;
-          modalConfirm.onclick = async () => {
-            await fetch(`/api/videos/${v.id}`, { method: "DELETE" });
-            closeModal();
-            loadVideos();
-          };
-          modalOverlay.classList.remove("hidden");
-        });
-      });
+          });
+        }
+        if (userCount) {
+          userCount.textContent = `${users.length} user${users.length === 1 ? "" : "s"}`;
+        }
+      } catch (e) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="3" class="px-4 py-6 text-center text-red-300 text-sm">
+              Failed to load users.
+            </td>
+          </tr>
+        `;
+      }
     }
 
-    function closeModal() {
-      modalOverlay.classList.add("hidden");
-    }
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      clearAlert();
 
-    modalCancel?.addEventListener("click", closeModal);
-    loadVideos();
+      const submitBtn = form.querySelector("button[type=submit]");
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/add-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: usernameInput.value.trim(),
+            password: passwordInput.value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          setAlert(data.error || "Failed to add user", "error");
+        } else {
+          setAlert("User created successfully.", "success");
+          form.reset();
+          loadUsers();
+        }
+      } catch (e) {
+        setAlert("Failed to add user", "error");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+
+    editForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!editUserIdInput || !editUsernameInput || !editPasswordInput) return;
+
+      clearEditAlert();
+      const submitBtn = editForm.querySelector("button[type=submit]");
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const payload = {
+          username: editUsernameInput.value.trim(),
+          password: editPasswordInput.value
+        };
+        const res = await fetch(`/api/users/${editUserIdInput.value}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          setEditAlert(data.error || "Failed to update user", "error");
+        } else {
+          setEditAlert("User updated.", "success");
+          loadUsers();
+          setTimeout(() => {
+            closeEditDialog();
+          }, 500);
+        }
+      } catch {
+        setEditAlert("Failed to update user", "error");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+
+    loadUsers();
   }
 
   function initPlaylistEditor() {

@@ -18,7 +18,7 @@ import bcrypt from "bcrypt";
 import { requireAuth, checkUserSetup } from "./libs/auth.js";
 import { fetchYearAndGenre } from "./libs/metaFetch.js";
 import { publishChannel } from "./libs/publish.js";
-import fs from 'fs'
+import fs from "fs";
 import os from "os";
 import { spawn } from "child_process";
 
@@ -26,7 +26,9 @@ const app = express();
 
 const PORT = process.env.PORT || 4456;
 const SESSION_SECRET = process.env.SESSION_SECRET || "changeme";
-const MEDIA_ROOT = process.env.MEDIA_ROOT
+const DEFAULT_MEDIA_ROOT = path.join(process.cwd(), "media");
+const MEDIA_ROOT = process.env.MEDIA_ROOT || DEFAULT_MEDIA_ROOT;
+const MANUAL_UPLOAD_ROOT = DEFAULT_MEDIA_ROOT;
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "changeme";
 
@@ -105,6 +107,10 @@ if (!fs.existsSync(COOKIES_DIR)) {
 const upload = multer({
   dest: "uploads/",
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
+});
+const videoUpload = multer({
+  dest: "uploads/",
+  limits: { fileSize: 1 * 1024 * 1024 * 1024 } // 1GB max
 });
 
 // Initial user setup (runs only if no users exist)
@@ -265,6 +271,96 @@ app.post("/api/add-url", requireAuth, async (req, res) => {
   }
 });
 
+function sanitizeSegment(input, fallback) {
+  if (!input) return fallback;
+  return input.replace(/[\\/]+/g, " ").replace(/[\r\n]/g, "").trim() || fallback;
+}
+
+function ensureUniquePath(baseDir, artistSegment, titleSegment, ext) {
+  const safeArtist = sanitizeSegment(artistSegment, "Manual Uploads");
+  const safeTitle = sanitizeSegment(titleSegment, "Untitled");
+  let rel = path.join(safeArtist, `${safeTitle}${ext}`);
+  let full = path.join(baseDir, rel);
+  let counter = 1;
+  while (fs.existsSync(full)) {
+    rel = path.join(safeArtist, `${safeTitle}-${counter}${ext}`);
+    full = path.join(baseDir, rel);
+    counter += 1;
+  }
+  return { rel, full, dir: path.join(baseDir, safeArtist) };
+}
+
+app.post("/api/manual-upload", requireAuth, videoUpload.single("video"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ ok: false, error: "No file uploaded" });
+  }
+
+  const db = await dbPromise;
+  const originalName = req.file.originalname || "upload.mp4";
+  const ext = (path.extname(originalName) || ".mp4").toLowerCase();
+  if (ext !== ".mp4") {
+    await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ ok: false, error: "Only MP4 files are supported" });
+  }
+
+  const baseName = path.basename(originalName, ext);
+  const nameParts = baseName
+    .split(" - ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const artistGuess = nameParts.length >= 2 ? nameParts[0] : "Manual Uploads";
+  const titleGuess = nameParts.length >= 2 ? nameParts.slice(1).join(" - ") : (nameParts[0] || baseName || "Untitled");
+
+  const tmpPath = req.file.path;
+  let savedPath = null;
+  const cleanupTmp = async () => {
+    try {
+      if (savedPath && fs.existsSync(savedPath)) {
+        await fs.promises.unlink(savedPath);
+      } else if (tmpPath && fs.existsSync(tmpPath)) {
+        await fs.promises.unlink(tmpPath);
+      }
+    } catch {}
+  };
+
+  try {
+    const existing = await db.get(
+      "SELECT id FROM videos WHERE artist = ? AND title = ? LIMIT 1",
+      artistGuess,
+      titleGuess
+    );
+    if (existing) {
+      await cleanupTmp();
+      return res.status(409).json({ ok: false, error: "Video already exists in your library" });
+    }
+
+    const { rel, full, dir } = ensureUniquePath(MANUAL_UPLOAD_ROOT, artistGuess, titleGuess, ".mp4");
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.rename(tmpPath, full);
+    savedPath = full;
+
+    const meta = await fetchYearAndGenre(artistGuess, titleGuess, null);
+    const result = await db.run(
+      `INSERT INTO videos (path, title, artist, year, genre, duration, is_ident, source_url)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+      rel,
+      titleGuess,
+      artistGuess,
+      meta.year,
+      meta.genre,
+      null,
+      null
+    );
+
+    const row = await db.get("SELECT * FROM videos WHERE id = ?", result.lastID);
+    res.json({ ok: true, video: row });
+  } catch (e) {
+    console.error("manual upload error", e);
+    await cleanupTmp();
+    res.status(500).json({ ok: false, error: "Failed to save upload" });
+  }
+});
+
 // API: add URL via yt-dlp (SSE stream)
 app.get("/api/add-url/stream", requireAuth, async (req, res) => {
   const url = req.query.url;
@@ -388,6 +484,63 @@ app.get("/api/users", async (req, res) => {
     FROM users
   `);
   res.json(rows);
+});
+
+app.patch("/api/users/:id", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const userId = Number(req.params.id);
+  const username = (req.body.username || "").trim();
+  const password = req.body.password || "";
+
+  if (!username) {
+    return res.status(400).json({ ok: false, error: "Username is required" });
+  }
+
+  const existing = await db.get(
+    "SELECT id FROM users WHERE username = ? AND id != ?",
+    username,
+    userId
+  );
+  if (existing) {
+    return res.status(409).json({ ok: false, error: "Username already taken" });
+  }
+
+  const updates = [];
+  const params = [];
+
+  updates.push("username = ?");
+  params.push(username);
+
+  if (password) {
+    if (password.length < 6) {
+      return res.status(400).json({ ok: false, error: "Password must be at least 6 characters" });
+    }
+    const hash = await bcrypt.hash(password, 10);
+    updates.push("password_hash = ?");
+    params.push(hash);
+  }
+
+  params.push(userId);
+
+  await db.run(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`, params);
+  res.json({ ok: true });
+});
+
+app.delete("/api/users/:id", requireAuth, async (req, res) => {
+  const db = await dbPromise;
+  const userId = Number(req.params.id);
+
+  if (req.user?.id === userId) {
+    return res.status(400).json({ ok: false, error: "You cannot delete your own account" });
+  }
+
+  const totalRow = await db.get("SELECT COUNT(*) AS cnt FROM users");
+  if (totalRow.cnt <= 1) {
+    return res.status(400).json({ ok: false, error: "Cannot delete the last remaining user" });
+  }
+
+  await db.run("DELETE FROM users WHERE id = ?", userId);
+  res.json({ ok: true });
 });
 
 app.post("/api/videos/:id/ident", requireAuth, async (req, res) => {

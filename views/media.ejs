@@ -3,19 +3,39 @@
   <!-- Dashboard Title -->
   <section class="space-y-3">
     <h1 class="text-3xl font-bold">Media</h1>
-    <form id="addForm" class="space-y-4">
-
-      <div>
-        <label class="block text-sm font-medium mb-1">YouTube URL</label>
-        <input type="url" name="url" id="url" required
-          placeholder="https://www.youtube.com/watch?v=... or Playlist"
-          class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded focus:ring-2 focus:ring-pink-500 focus:outline-none" />
+    <form id="addForm" class="space-y-5">
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="space-y-3">
+          <label class="block text-sm font-medium mb-1">YouTube URL</label>
+          <input type="url" name="url" id="url" required
+            placeholder="https://www.youtube.com/watch?v=... or Playlist"
+            class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded focus:ring-2 focus:ring-pink-500 focus:outline-none" />
+          <button type="submit"
+            class="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-fuchsia-500 text-sm font-semibold shadow-neon hover:brightness-110 transition text-white">
+            Add
+          </button>
+        </div>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label for="manualUploadInput" class="block text-sm font-medium">Manual Upload</label>
+            <span class="text-[0.7rem] text-gray-400">MP4 only</span>
+          </div>
+          <input type="file" id="manualUploadInput" accept=".mp4,video/mp4" multiple class="hidden" />
+          <div
+            id="manualUploadZone"
+            class="relative flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-purple-400/60 bg-black/40 px-4 py-6 text-center text-sm text-purple-100 cursor-pointer transition hover:border-purple-300 hover:bg-purple-900/20">
+            <div
+              class="h-12 w-12 rounded-2xl bg-gradient-to-br from-purple-500/40 to-fuchsia-500/40 border border-white/10 flex items-center justify-center text-xs font-semibold tracking-wide text-purple-200 shadow-neon/30 uppercase">
+              Upload
+            </div>
+            <div class="space-y-1">
+              <p class="font-semibold text-white">Drag & drop files</p>
+              <p class="text-xs text-gray-300">or click to browse from your computer</p>
+            </div>
+            <p class="text-[0.7rem] text-gray-400">Files upload straight into your media library.</p>
+          </div>
+        </div>
       </div>
-
-      <button type="submit"
-        class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition">
-        Add
-      </button>
     </form>
     <!-- Add Video Status Modal -->
     <dialog id="addStatusModal"

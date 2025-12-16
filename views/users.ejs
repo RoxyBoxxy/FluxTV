@@ -1,141 +1,108 @@
-<%- include("layout", { title: "Users" , user, body: ` <div class="space-y-10">
+<%- include("layout", { title: "Users" , user, body: ` <div id="usersPage" data-current-user="${user.username}" class="space-y-10">
 
-  <!-- Dashboard Title -->
   <section class="space-y-3">
-    <h1 class="text-3xl font-bold">Users</h1>
-    <form id="addForm" class="space-y-4">
-
-      <div>
-        <label class="block text-sm font-medium mb-1">Username</label>
-        <input type="text" name="username" id="username" required
-          class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded focus:ring-2 focus:ring-pink-500 focus:outline-none" />
-      </div>
-      <div>
-        <label class="block text-sm font-medium mb-1">password</label>
-        <input type="password" name="password" id="password" required
-          class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded focus:ring-2 focus:ring-pink-500 focus:outline-none" />
-      </div>
-
-      <button type="submit"
-        class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition">
-        Add
-      </button>
-    </form>
+    <h1 class="text-3xl font-bold">User Management</h1>
+    <p class="text-sm text-gray-300 max-w-2xl">
+      Invite teammates or manage your admin logins. Creating an account immediately grants dashboard access.
+    </p>
   </section>
 
+  <section class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+    <div class="space-y-4 rounded-3xl border border-white/5 bg-black/40 p-6 shadow-[0_0_40px_rgba(40,10,70,0.65)]">
+      <h2 class="text-xl font-semibold text-white">Add a User</h2>
+      <p class="text-sm text-gray-300">Choose a unique username and a strong password.</p>
 
-  <!-- Videos -->
-  <section class="space-y-4">
-    <h2 class="text-xl font-semibold">Videos</h2>
+      <form id="userForm" class="space-y-4">
+        <div>
+          <label for="userUsername" class="block text-sm font-medium mb-1">Username</label>
+          <input type="text" id="userUsername" name="username" required
+            class="w-full px-4 py-2.5 bg-black/70 border border-white/10 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm" />
+        </div>
+        <div>
+          <label for="userPassword" class="block text-sm font-medium mb-1">Password</label>
+          <input type="password" id="userPassword" name="password" minlength="6" required
+            class="w-full px-4 py-2.5 bg-black/70 border border-white/10 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm" />
+        </div>
+        <div id="userFormAlert" class="hidden rounded-xl border border-white/10 px-4 py-3 text-sm"></div>
+        <button type="submit"
+          class="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-fuchsia-500 text-sm font-semibold shadow-neon hover:brightness-110 transition text-white">
+          Create user
+        </button>
+      </form>
+    </div>
 
-    <!-- Native dialog modal -->
-    <dialog id="videoModal"
-      class="backdrop:bg-black backdrop:bg-opacity-70 rounded-lg p-6 bg-gray-800 text-gray-100 w-[400px] border border-gray-700 hidden"
-      style="display:none;">
-      <h3 id="videoModalTitle" class="text-xl font-bold mb-4">Modal</h3>
-
-      <div id="videoModalContent" class="text-gray-200 mb-6">
-        <!-- JS injects edit/delete content here -->
+    <div class="space-y-4 rounded-3xl border border-white/5 bg-black/40 p-6 shadow-[0_0_40px_rgba(40,10,70,0.65)]">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-semibold text-white">Existing Users</h2>
+          <p class="text-sm text-gray-400">All current administrators.</p>
+        </div>
+        <span id="userCount" class="text-xs px-3 py-1 rounded-full bg-purple-500/20 text-purple-100 border border-purple-400/30">0 users</span>
       </div>
 
-      <div class="flex justify-end gap-3">
-        <button id="videoModalCancel" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded">Cancel</button>
-
-        <button id="videoModalConfirm" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded">Confirm</button>
+      <div class="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+        <table class="min-w-full text-sm">
+          <thead class="bg-white/5 text-gray-300">
+            <tr>
+              <th class="px-4 py-2 text-left font-medium tracking-wide">ID</th>
+              <th class="px-4 py-2 text-left font-medium tracking-wide">Username</th>
+              <th class="px-4 py-2 text-left font-medium tracking-wide">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="userTableBody" class="divide-y divide-white/5 text-gray-100">
+            <tr>
+              <td colspan="3" class="px-4 py-6 text-center text-gray-400 text-sm">
+                Loading users…
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </dialog>
-
-    <div class="overflow-x-auto">
-      <table id="videosTable" class="min-w-full border border-gray-700 rounded text-sm">
-        <thead class="bg-gray-800">
-          <tr>
-            <th class="px-3 py-2 border border-gray-700">ID</th>
-            <th class="px-3 py-2 border border-gray-700">Title</th>
-            <th class="px-3 py-2 border border-gray-700">Artist</th>
-            <th class="px-3 py-2 border border-gray-700">Year</th>
-            <th class="px-3 py-2 border border-gray-700">Genre</th>
-            <th class="px-3 py-2 border border-gray-700">Ident?</th>
-            <th class="px-3 py-2 border border-gray-700">Source</th>
-            <th class="px-3 py-2 border border-gray-700">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="videosTableBody" class="divide-y divide-gray-800">
-          <!-- dashboard.js will populate rows like:
-          <tr>
-            <td>1</td>
-            <td>Song title</td>
-            <td>Artist</td>
-            <td>2024</td>
-            <td>Pop</td>
-            <td>No</td>
-            <td>YouTube</td>
-            <td class="px-3 py-2 flex gap-2">
-              <button data-id="1" class="editBtn px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm">Edit</button>
-              <button data-id="1" class="deleteBtn px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm">Delete</button>
-            </td>
-          </tr>
-          -->
-        </tbody>
-      </table>
     </div>
   </section>
 
-  <!-- Modal Lightbox -->
-  <div id="modalOverlay" class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+  <dialog id="userEditDialog"
+    class="backdrop:bg-black/70 rounded-3xl p-0 bg-transparent text-gray-100 w-[420px] border-0"
+    style="margin:auto;">
+    <div class="border border-white/10 rounded-3xl p-6 shadow-[0_0_55px_rgba(10,0,20,0.9)]" style="background-color: rgba(10, 4, 22, 0.95);">
+      <h3 class="text-2xl font-semibold mb-4 text-white">Edit User</h3>
+      <form id="userEditForm" class="space-y-4">
+        <input type="hidden" id="editUserId" />
+        <div>
+          <label class="block text-sm font-medium mb-1">Username</label>
+          <input type="text" id="editUsername" readonly
+            class="w-full px-4 py-2.5 bg-black/70 border border-white/10 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Password <span class="text-xs text-gray-400">(leave blank to keep)</span></label>
+          <input type="password" id="editPassword" minlength="6"
+            class="w-full px-4 py-2.5 bg-black/70 border border-white/10 rounded-xl focus:ring-2 focus:ring-purple-500 focus:outline-none text-sm" />
+        </div>
+        <div id="userEditAlert" class="hidden rounded-xl border border-white/10 px-4 py-3 text-sm"></div>
+        <div class="flex justify-end gap-3">
+          <button type="button" id="userEditCancel"
+            class="px-4 py-2.5 rounded-xl border border-white/10 bg-black/60 text-sm text-purple-100 hover:bg-purple-900/40 transition">Cancel</button>
+          <button type="submit"
+            class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-fuchsia-500 text-sm font-semibold shadow-neon hover:brightness-110 transition text-white">Save</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
 
-    <div id="modalBox" class="bg-gray-800 border border-gray-700 rounded-lg p-6 w-full max-w-lg shadow-xl">
-
-      <h2 id="modalTitle" class="text-2xl font-bold mb-4">Modal</h2>
-
-      <div id="modalContent" class="text-gray-200 mb-6">
-        <!-- dashboard.js will inject form or confirmation UI here -->
-      </div>
-      <div class="flex justify-end gap-3">
-        <button id="modalCancel" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded">
-          Cancel
-        </button>
-
-        <button id="modalConfirm" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded">
-          Confirm
-        </button>
+  <dialog id="userConfirmDialog"
+    class="backdrop:bg-black/70 rounded-3xl p-0 bg-transparent text-gray-100 w-[400px] border-0"
+    style="margin:auto;">
+    <div class="border border-white/10 rounded-3xl p-6 shadow-[0_0_55px_rgba(10,0,20,0.9)]" style="background-color: rgba(10, 4, 22, 0.95);">
+      <h3 class="text-2xl font-semibold mb-4 text-white">Confirm Delete</h3>
+      <p id="userConfirmText" class="text-sm text-gray-200"></p>
+      <div class="flex justify-end gap-3 mt-6">
+        <button type="button" id="userConfirmCancel"
+          class="px-4 py-2.5 rounded-xl border border-white/10 bg-black/60 text-sm text-purple-100 hover:bg-purple-900/40 transition">Cancel</button>
+        <button type="button" id="userConfirmDelete"
+          class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-500 to-pink-500 text-sm font-semibold shadow-neon hover:brightness-110 transition text-white">Delete</button>
       </div>
     </div>
-  </div>
-
-  <script>
-    // Dialog helpers for dashboard.js
-    const videoModal = document.getElementById("videoModal");
-    const videoModalTitle = document.getElementById("videoModalTitle");
-    const videoModalContent = document.getElementById("videoModalContent");
-    const videoModalCancel = document.getElementById("videoModalCancel");
-    const videoModalConfirm = document.getElementById("videoModalConfirm");
-
-    window.openVideoModal = (title, contentHTML, confirmCallback) => {
-      videoModalTitle.textContent = title;
-      videoModalContent.innerHTML = contentHTML;
-
-      function cleanup() {
-        videoModalConfirm.removeEventListener("click", onConfirm);
-        videoModalCancel.removeEventListener("click", onCancel);
-      }
-
-      function onConfirm() {
-        confirmCallback();
-        cleanup();
-        videoModal.close();
-      }
-
-      function onCancel() {
-        cleanup();
-        videoModal.close();
-      }
-
-      videoModalConfirm.addEventListener("click", onConfirm);
-      videoModalCancel.addEventListener("click", onCancel);
-
-      videoModal.showModal();
-    };
-  </script>
+  </dialog>
 
   </div>
   ` }) %>

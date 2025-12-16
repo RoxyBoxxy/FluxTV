@@ -279,10 +279,10 @@ function startMainFfmpeg() {
     "-progress", "pipe:1",
     "-stats_period", "1",
 
-    //"-c:v", "copy",
-    //"-c:a", "copy",
-    //"-f", "flv",
-    //settingsCache.output_rtmp_url,
+    "-c:v", "copy",
+    "-c:a", "copy",
+    "-f", "flv",
+    settingsCache.output_rtmp_url,
 
     "-c:v", "copy",
     "-c:a", "copy",

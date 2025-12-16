@@ -6,7 +6,7 @@
     "start": "node server.js",
     "dev:css": "npx tailwindcss -i ./public/tailwind.css -o ./public/styles.css",
     "build:js": "npx esbuild ./src/app.js --bundle --minify --outfile=./public/app.js",
-    "build": "npm run build:js && npx tailwindcss -i ./public/tailwind.css -o ./public/styles.css && enmav --update-version && git push",
+    "build": "npm run build:js && enmav --update-version && git push",
     "release": "standard-version",
     "build:asv": "enmav --update-version"
   },
